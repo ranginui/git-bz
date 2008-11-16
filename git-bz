@@ -71,11 +71,11 @@
 #     Examples:
 #
 #       # File the last commit as a new bug on the default tracker
-#       git bz file HEAD^
+#       git bz file my-product/some-component HEAD^
 #
 #       # File a bug with a series of patches starting from an old commit
 #       # on a different bug tracker
-#       git bz -b bugs.freedesktop.org file b50ea9bd^ -1
+#       git bz -b bugs.freedesktop.org file my-product/some-component b50ea9bd^ -1
 #
 # Authentication
 # ==============
