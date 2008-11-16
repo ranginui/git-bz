@@ -37,3 +37,11 @@ Better display of errors
 
   Currently specifying a non-existent product/component just dumps
   out raw HTML for the reply. Etc.
+
+More general patch application
+
+  'git bz apply' currently only handles patches formated with
+  'git format-patch', it should be able to apply general patches
+  as well. For general patches, you would use information from
+  bugzilla to prime the author and commit message, but allow
+  further editing of the commit message.
