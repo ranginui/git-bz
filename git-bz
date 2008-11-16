@@ -190,7 +190,7 @@ global_options = None
 
 def get_commits(since_or_revision_range):
     if global_options.num:
-        commits = git.Commit.find_all(repo, since_or_revision_range, max_count=global_options.num)
+        commits = git.Commit.find_all(global_repo, since_or_revision_range, max_count=global_options.num)
     else:
         # git format-patch has special handling of specifying a single revision that is
         # different than git-rev-list. Match that.
@@ -202,7 +202,7 @@ def get_commits(since_or_revision_range):
             # If not, assume the argument is a range
             revision_range = since_or_revision_range
 
-        commits = git.Commit.find_all(repo, revision_range)
+        commits = git.Commit.find_all(global_repo, revision_range)
 
     if len(commits) == 0:
         die("'%s' does not name any commits. Use HEAD^ to specify just the last commit" %
@@ -277,6 +277,7 @@ cached_config_tracker = None
 
 def get_config(tracker):
     global cached_config
+    global cached_config_tracker
 
     if cached_config == None:
         cached_config_tracker = tracker
@@ -737,7 +738,7 @@ else:
     print >>sys.stderr, "Usage: git bz [apply|attach|file] [options]"
     sys.exit(1)
 
-options, args = parser.parse_args()
+global_options, args = parser.parse_args()
 
 if len(args) != n_args:
     parser.print_usage()
