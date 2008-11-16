@@ -30,6 +30,18 @@
 # Usage
 # =====
 #
+#  git bz add-url [-<N>] [options] <bug reference> [<since | <revision range>]
+#
+#    For each specified commit, rewrite the commit message to add the URL
+#    of the given bug. You should only do this if you haven't already pushed
+#    the commit publically. Running this directly is most useful as a fixup if
+#    you forget to pass -u/--add-url to 'git bz attach' or 'git bz file'.
+#
+#    Example:
+#
+#       # Add a bug URL to the last commit
+#       git bz attach 1234 HEAD^
+#
 #  git bz apply [options] <bug reference>
 #
 #    For each patch attachment (except for obsolete patches) of the specified
@@ -37,13 +49,17 @@
 #    the patch to apply it to the current branch. Aborts if 'git am' fails to
 #    allow cleaning up conflicts.
 #
-#    Example:
+#    Examples:
 #
+#       # Apply patches from the given bug
 #       git bz apply bugzillla.gnome.org:1234
+#
+#       # Same, but add the bug URL to the commit messages
+#       git bz apply -u bugzillla.gnome.org:1234
 #
 #  git bz attach [-<N>] [options] <bug reference> [<since | <revision range>]
 #
-#    For each commit or commits, formats as a patch and attaches to the
+#    For each specified commit, formats as a patch and attaches to the
 #    specified bug, with the subject of the commit as the description and
 #    the body of the commit as the comment. The patch formatting and and
 #    specification of which commits are as for 'git format-patch'
@@ -58,8 +74,9 @@
 #       # Attach everything starting at an old commit
 #       git bz attach bugzilla.gnome.org:1234 b50ea9bd^
 #
-#       # Attach a single old commit
-#       git bz attach bugzilla.gnome.org:1234 b50ea9bd -1
+#       # Attach a single old commit and rewrite the commit message
+#       # to include the bug URL. (See 'git bz add-url')
+#       git bz attach -u bugzilla.gnome.org:1234 b50ea9bd -1
 #
 #  git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]
 #
@@ -72,6 +89,10 @@
 #
 #       # File the last commit as a new bug on the default tracker
 #       git bz file my-product/some-component HEAD^
+#
+#       # Same but rewrite the commit message to include the URL of the
+#       # newly filed bug. (See 'git bz add-url')
+#       git bz file -u my-product/some-component HEAD^
 #
 #       # File a bug with a series of patches starting from an old commit
 #       # on a different bug tracker
@@ -173,6 +194,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import urllib
 from xml.etree.cElementTree import ElementTree
 
@@ -529,7 +551,7 @@ class Bug(object):
 
         print "Successfully created"
         print "Bug %d - %s" % (self.id, short_desc)
-        print "http://%s/show_bug.cgi?id=%d" % (self.host, self.id)
+        print self.get_url()
 
     def create_patch(self, description, comment, filename, data):
         fields = {}
@@ -562,6 +584,9 @@ class Bug(object):
 
         return response.read()
 
+    def get_url(self):
+        return "%s://%s/show_bug.cgi?id=%d" % ("https" if self.https else "http", self.host, self.id)
+
     @staticmethod
     def load(bug_reference):
         (host, https, id) = resolve_bug_reference(bug_reference)
@@ -584,6 +609,92 @@ class Bug(object):
 
 # The Commands
 # =============
+
+def check_add_url(commits):
+    try:
+        global_repo.git.diff(exit_code=True)
+        global_repo.git.diff(exit_code=True, cached=True)
+    except git.errors.GitCommandError:
+        die("You must commit (or stash) all changes before using -u/--add-url")
+
+    # We should check that all the commits are ancestors of the current
+    # current revision, and maybe also check make sure that there are no
+    # merge commits.
+
+def add_url(bug, commits):
+    oldest_commit = commits[-1]
+
+    newer_commits = git.Commit.find_all(global_repo, commits[0].id + "..HEAD")
+
+    head_id = newer_commits[0].id if newer_commits else oldest_commit.id
+
+    try:
+        print "Resetting to the parent revision"
+        global_repo.git.reset(oldest_commit.id + "^", hard=True)
+
+        for commit in reversed(commits):
+            body = get_body(commit)
+
+            if str(bug.id) in body:
+                print "Recommitting", commit.id[0:7], commit.message, "(already has bug #)"
+                global_repo.git.cherry_pick(commit.id)
+                # Find the new commit ID, though it doesn't matter much here
+                commit.id = global_repo.git.rev_list("HEAD^!")
+                continue
+
+            print "Adding URL  ", commit.id[0:7], commit.message
+            global_repo.git.cherry_pick(commit.id)
+
+            process = subprocess.Popen(['git', 'commit', '--file=-', '--amend'],
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            process.stdin.write(commit.message)
+            process.stdin.write("\n\n")
+            process.stdin.write(body)
+            process.stdin.write("\n\n")
+            process.stdin.write(bug.get_url())
+            process.stdin.close()
+            # Discard output
+            process.stdout.read()
+            process.stdout.close()
+            process.wait()
+            if process.returncode != 0:
+                raise RuntimeException("git commit --amend failed")
+
+            # In this case, we need the new commit ID, so that when we later format the
+            # patch, we format the patch with the added bug URL
+            commit.id = global_repo.git.rev_list("HEAD^!")
+
+        for commit in reversed(newer_commits):
+            print "Recommitting", commit.id[0:7], commit.message
+            global_repo.git.cherry_pick(commit.id)
+            commit.id = global_repo.git.rev_list("HEAD^!")
+    except:
+        traceback.print_exc(None, sys.stderr)
+        print >>sys.stderr
+        print >>sys.stderr, "Something went wrong rewriting commmits to add URLs"
+        print >>sys.stderr, "To restore to the original state: git reset --hard %s" % head_id[0:12]
+        sys.exit(1)
+
+def do_add_url(bug_reference, since_or_revision_range):
+    commits = get_commits(since_or_revision_range)
+    check_add_url(commits)
+
+    bug = Bug.load(bug_reference)
+
+    print "Bug %d - %s" % (bug.id, bug.short_desc)
+    print bug.get_url()
+    print
+
+    for commit in commits:
+        print commit.id[0:7], commit.message
+
+    print
+    if not prompt("Add bug URL to above commits?"):
+        print "Aborting"
+        sys.exit(0)
+
+    print
+    add_url(bug, commits)
 
 def do_apply(bug_reference):
     bug = Bug.load(bug_reference)
@@ -612,6 +723,11 @@ def do_apply(bug_reference):
 
         os.remove(filename)
 
+        if global_options.add_url:
+            # Slightly hacky, would be better to just commit right the first time
+            commits = git.Commit.find_all(global_repo, "HEAD^!")
+            add_url(bug, commits)
+
 def attach_commits(bug, commits, include_comments=True):
     # We want to attach the patches in chronological order
     commits = list(commits)
@@ -627,12 +743,15 @@ def attach_commits(bug, commits, include_comments=True):
         bug.create_patch(commit.message, body, filename, patch)
 
 def do_attach(bug_reference, since_or_revision_range):
+    commits = get_commits(since_or_revision_range)
+    if global_options.add_url:
+        check_add_url(commits)
+
     bug = Bug.load(bug_reference)
 
     print "Bug %d - %s" % (bug.id, bug.short_desc)
     print
 
-    commits = get_commits(since_or_revision_range)
     for commit in commits:
         print commit.id[0:7], commit.message
 
@@ -640,6 +759,9 @@ def do_attach(bug_reference, since_or_revision_range):
     if not prompt("Attach?"):
         print "Aborting"
         sys.exit(0)
+
+    if global_options.add_url:
+        add_url(bug, commits)
 
     attach_commits(bug, commits)
 
@@ -651,6 +773,9 @@ def do_file(product_component, since_or_revision_range):
     component = m.group(2)
 
     commits = get_commits(since_or_revision_range)
+
+    if global_options.add_url:
+        check_add_url(commits)
 
     template = StringIO()
     if len(commits) == 1:
@@ -700,6 +825,9 @@ def do_file(product_component, since_or_revision_range):
 
     bug = Bug.create(tracker, product, component, summary, description)
 
+    if global_options.add_url:
+        add_url(bug, commits)
+
     attach_commits(bug, commits, include_comments=(len(commits) > 1))
 
 ################################################################################
@@ -721,21 +849,32 @@ def add_num_option():
         if m:
             sys.argv[i] = "--num=" + m.group(1)
 
-if command == 'apply':
+def add_add_url_option():
+    parser.add_option("-u", "--add-url", action="store_true",
+                      help="rewrite commits to add the bug URL")
+
+if command == 'add-url':
+    parser.set_usage("git bz add-url [-<N>] [options] <bug reference> [<since | <revision range>]");
+    add_num_option()
+    n_args = 2
+elif command == 'apply':
     parser.set_usage("git bz apply [options] <bug reference>");
+    add_add_url_option()
     n_args = 1
 elif command == 'attach':
     parser.set_usage("git bz attach [-<N>] [options] <bug reference> [<since | <revision range>]");
+    add_add_url_option()
     add_num_option()
     n_args = 2
 elif command == 'file':
     parser.set_usage("git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]");
     parser.add_option("-b", "--bugzilla", metavar="HOST_OR_ALIAS",
                       help="bug tracker to file bug on")
+    add_add_url_option()
     add_num_option()
     n_args = 2
 else:
-    print >>sys.stderr, "Usage: git bz [apply|attach|file] [options]"
+    print >>sys.stderr, "Usage: git bz [add-url|apply|attach|file] [options]"
     sys.exit(1)
 
 global_options, args = parser.parse_args()
@@ -746,9 +885,11 @@ if len(args) != n_args:
 
 global_repo = git.Repo()
 
-if command == 'apply':
+if command == 'add-url':
+    do_add_url(*args)
+elif command == 'apply':
     do_apply(*args)
-if command == 'attach':
+elif command == 'attach':
     do_attach(*args)
 elif command == 'file':
     do_file(*args)

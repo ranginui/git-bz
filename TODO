@@ -6,20 +6,6 @@ any intention of working on it myself.
 
 - Owen
 
-
--u/--add-url Option
-
-  When specified, local commits are edited to append the Bug URL.
-
-    attach: Before attaching them to the bug
-
-  Requires: clean index and a series of bugs that leads to the
-    current HEAD commit.
-  Can't be the default because commits might have already been pushed
-  Should be smart if the URL is already in the bug
-  Might be useful to have a standalone 'add-url' subcommand that can
-    be used to fix up if you forget to specify it.
-
 Use XML-RPC when available.
 
   Maybe use python-bugzilla: http://fedorahosted.org/python-bugzilla/
@@ -45,3 +31,10 @@ More general patch application
   as well. For general patches, you would use information from
   bugzilla to prime the author and commit message, but allow
   further editing of the commit message.
+
+Make -u/--add-url kinder on the reflog
+
+  -u works by resetting, then on each patch, running git cherry-pick
+  followed by git commit --amend. It would be nice to only have one
+  (informative) reflog entry for the entire process, or at least avoid
+  the double commits.
