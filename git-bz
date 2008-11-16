@@ -1,0 +1,755 @@
+#!/usr/bin/python
+#
+# git-bz - git subcommand to integrate with bugzilla
+#
+# Copyright (C) 2008  Owen Taylor
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, If not, see
+# http://www.gnu.org/licenses/.
+#
+# Patches for git-bz
+# ==================
+# Send to Owen Taylor <otaylor@fishsoup.net>
+#
+# Installation
+# ============
+# Copy or symlink somewhere in your path. You'll need to have GitPython installed.
+# See: http://gitorious.org/projects/git-python/
+#
+# Usage
+# =====
+#
+#  git bz apply [options] <bug reference>
+#
+#    For each patch attachment (except for obsolete patches) of the specified
+#    bug, prompts whether to apply. If prompt is agreed to runs 'git am' on
+#    the patch to apply it to the current branch. Aborts if 'git am' fails to
+#    allow cleaning up conflicts.
+#
+#    Example:
+#
+#       git bz apply bugzillla.gnome.org:1234
+#
+#  git bz attach [-<N>] [options] <bug reference> [<since | <revision range>]
+#
+#    For each commit or commits, formats as a patch and attaches to the
+#    specified bug, with the subject of the commit as the description and
+#    the body of the commit as the comment. The patch formatting and and
+#    specification of which commits are as for 'git format-patch'
+#
+#    Prompts before actually doing anything to avoid mistakes.
+#
+#    Examples:
+#
+#       # Attach the last commit
+#       git bz attach bugzilla.gnome.org:1234 HEAD^
+#
+#       # Attach everything starting at an old commit
+#       git bz attach bugzilla.gnome.org:1234 b50ea9bd^
+#
+#       # Attach a single old commit
+#       git bz attach bugzilla.gnome.org:1234 b50ea9bd -1
+#
+#  git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]
+#
+#     Like 'attach', but files a new bug. Opens an editor for the user to
+#     enter the summary and description for the bug. If only a single commit
+#     is named summary defaults to the subject of the commit, and the description
+#     to the body of the bug
+#
+#     Examples:
+#
+#       # File the last commit as a new bug on the default tracker
+#       git bz file HEAD^
+#
+#       # File a bug with a series of patches starting from an old commit
+#       # on a different bug tracker
+#       git bz -b bugs.freedesktop.org file b50ea9bd^ -1
+#
+# Authentication
+# ==============
+# In order to use git-bz you need to already be logged into the bug tracker
+# in your web browser, and git-bz reads your browser cookie. Currently only
+# Firefox 3 is supported, and only on Linux. Patches to add more support and
+# to allow configuring username/password directly per bug tracker accepted.
+#
+# Bug references
+# ==============
+# Ways to refer to a bug:
+#  <id>         : bug # on the default bug tracker
+#  <host>:<id>  : bug # on the given host
+#  <alias>:<id> : bug # on the given bug tracker alias (see below)
+#  <url>        : An URL of the form http://<hostname>/show_bug.cgi?id=<id>
+#
+# Aliases
+# =======
+# You can create short aliases for different bug trackers as follows
+#
+#   git config --global bz-tracker.bgo.host bugzilla.gnome.org
+#
+# And you can set the default bug tracker with:
+#
+#   git config --global bz.default-tracker bgo
+#
+# Per Tracker Configuration
+# =========================
+# git-bz needs some configuration specific to the bugzilla instance (tracker),
+# in particular it needs to know initial field values to use when submitting
+# bugs; legal values for some fields depend on the instance.
+#
+# You can also set whether to use http or https by setting the 'https' variabe
+# For https, *certificates are not checked* so you are completely vulnerable
+# to DNS spoofing and man-in-the-middle attacks. Blame httplib.
+#
+# Configuration comes from 4 sources, in descending order of priority
+#
+# 1) git configuration variables specified for the alias.
+#
+#    git config --global bz-tracker.bgo.default-bug-severity trivial
+#
+# 2) git configuration variables specified for the host
+#
+#    git config --global bz-tracker.bugzilla.gnome.org.default-bug-severity trivial
+#
+# 3) Host specific configuration in this file, see the CONFIG variable below
+#
+# 4) Default configuration in this file, see the DEFAULT_CONFIG variable below
+#
+# In general, settings that are necessary to make a popular bugzilla instance
+# work should be submitted back to me and go in the CONFIG variable.
+#
+DEFAULT_CONFIG = \
+"""
+default-assigned-to =
+default-bug-file-loc =
+default-bug-severity =
+default-op-sys = All
+default-priority = P5
+default-rep-platform = All
+default-version = unspecified
+"""
+
+CONFIG = {}
+
+CONFIG['bugs.freedesktop.org'] = \
+"""
+https = true
+default-priority = medium
+"""
+
+CONFIG['bugzilla.gnome.org'] = \
+"""
+default-priority = Normal
+"""
+
+CONFIG['bugzilla.mozilla.org'] = \
+"""
+https = true
+default-priority = ---
+"""
+
+################################################################################
+
+from ConfigParser import RawConfigParser
+import git
+from httplib import HTTPConnection, HTTPSConnection
+from optparse import OptionParser
+import os
+from pysqlite2 import dbapi2 as sqlite
+import re
+from StringIO import StringIO
+import subprocess
+import sys
+import tempfile
+import time
+import urllib
+from xml.etree.cElementTree import ElementTree
+
+# Globals
+# =======
+
+# git.Repo() instance
+global_repo = None
+
+# options dictionary from optparse
+global_options = None
+
+# Utility functions for git
+# =========================
+
+def get_commits(since_or_revision_range):
+    if global_options.num:
+        commits = git.Commit.find_all(repo, since_or_revision_range, max_count=global_options.num)
+    else:
+        # git format-patch has special handling of specifying a single revision that is
+        # different than git-rev-list. Match that.
+        try:
+            # See if the argument identifies a single revision
+            rev = global_repo.git.rev_parse(since_or_revision_range, verify=True)
+            revision_range = rev + ".."
+        except git.errors.GitCommandError:
+            # If not, assume the argument is a range
+            revision_range = since_or_revision_range
+
+        commits = git.Commit.find_all(repo, revision_range)
+
+    if len(commits) == 0:
+        die("'%s' does not name any commits. Use HEAD^ to specify just the last commit" %
+            since_or_revision_range)
+
+    return commits
+
+def get_patch(commit):
+    return global_repo.git.format_patch(commit.id + "^.." + commit.id, stdout=True)
+
+def get_body(commit):
+    return global_repo.git.log(commit.id + "^.." + commit.id, pretty="format:%b")
+
+# Per-tracker configuration variables
+# ===================================
+
+def get_default_tracker():
+    try:
+        return global_repo.git.config('bz.default-tracker', get=True)
+    except git.errors.GitCommandError:
+        return 'bugzilla.gnome.org'
+
+def resolve_host_alias(alias):
+    try:
+        return global_repo.git.config('bz-tracker.' + alias + '.host', get=True)
+    except git.errors.GitCommandError:
+        return alias
+
+def split_local_config(config_text):
+    result = {}
+
+    for line in config_text.split("\n"):
+        line = re.sub("#.*", "", line)
+        line = line.strip()
+        if line == "":
+            continue
+        m = re.match("([a-zA-Z0-9-]+)\s*=\s*(.*)", line)
+        if not m:
+            die("Bad config line '%s'" % line)
+
+        param = m.group(1)
+        value = m.group(2)
+
+        result[param] = value
+
+    return result
+
+def get_git_config(name):
+    try:
+        name = name.replace(".", r"\.")
+        config_options = global_repo.git.config(r'bz-tracker\.' + name + r'\..*', get_regexp=True)
+    except git.errors.GitCommandError:
+        return {}
+
+    result = {}
+    for line in config_options.split("\n"):
+        line = line.strip()
+        m = re.match("(\S+)\s+(.*)", line)
+        key = m.group(1)
+        value = m.group(2)
+
+        m = re.match(r'bz-tracker\.' + name + r'\.(.*)', key)
+        param = m.group(1)
+
+        result[param] = value
+
+    return result
+
+# We only ever should be the config for one tracker in the course of a single run
+cached_config = None
+cached_config_tracker = None
+
+def get_config(tracker):
+    global cached_config
+
+    if cached_config == None:
+        cached_config_tracker = tracker
+        host = resolve_host_alias(tracker)
+        cached_config = split_local_config(DEFAULT_CONFIG)
+        if host in CONFIG:
+            cached_config.update(split_local_config(CONFIG[host]))
+        cached_config.update(get_git_config(host))
+        if tracker != host:
+            cached_config.update(get_git_config(tracker))
+
+    assert cached_config_tracker == tracker
+
+    return cached_config
+
+def tracker_uses_https(tracker):
+    config = get_config(tracker)
+    return 'https' in config and config['https'] == 'true'
+
+def get_default_fields(tracker):
+    config = get_config(tracker)
+
+    default_fields = {}
+
+    for key, value in config.iteritems():
+        if key.startswith("default-"):
+            param = key[8:].replace("-", "_")
+            default_fields[param] = value
+
+    return default_fields
+
+# Utility functions for bugzilla
+# ==============================
+
+def resolve_bug_reference(bug_reference):
+    m = re.match("http(s?)://([^/]+)/show_bug.cgi\?id=([^&]+)", bug_reference)
+    if m:
+        return m.group(2), m.group(1) != None, m.group(3)
+
+    colon = bug_reference.find(":")
+    if colon > 0:
+        tracker = bug_reference[0:colon]
+        id = bug_reference[colon + 1:]
+    else:
+        tracker = get_default_tracker()
+        id = bug_reference
+
+    host = resolve_host_alias(tracker)
+    https = tracker_uses_https(tracker)
+
+    if not re.match(r"^.*\.[a-zA-Z]{2,}$", host):
+        die("'%s' doesn't look like a valid bugzilla host or alias" % host)
+
+    return host, https, id
+
+def get_bugzilla_cookies(host):
+    profiles_dir = os.path.expanduser("~/.mozilla/firefox")
+
+    profile_path = None
+
+    cp = RawConfigParser()
+    cp.read(os.path.join(profiles_dir, "profiles.ini"))
+    for section in cp.sections():
+        if cp.has_option(section, "Default") and cp.get(section, "Default").strip() == "1":
+            profile_path = os.path.join(profiles_dir, cp.get(section, "Path").strip())
+
+    if not profile_path:
+        die("Cannot find default Firefox profile")
+
+    cookies_sqlite = os.path.join(profile_path, "cookies.sqlite")
+    if not os.path.exists(cookies_sqlite):
+        die("%s doesn't exist. Only Firefox 3 is supported currently")
+
+    result = {}
+
+    connection = sqlite.connect(cookies_sqlite)
+    cursor = connection.cursor()
+    cursor.execute("select name,value,path,expiry from moz_cookies where host = :host", { 'host': host })
+
+    now = time.time()
+    for name,value,path,expiry in cursor.fetchall():
+        # Excessive caution: toss out values that need to be quoted in a cookie header
+        if float(expiry) > now and not re.search(r'[()<>@,;:\\"/\[\]?={} \t]', value):
+            result[name] = value
+    connection.close()
+
+    if not ('Bugzilla_login' in result and 'Bugzilla_logincookie' in result):
+        die("You don't appear to be signed into %s; please log in with Firefox" % host)
+
+    return result
+
+# Based on http://code.activestate.com/recipes/146306/ - Wade Leftwich
+def encode_multipart_formdata(fields, files):
+    """
+    fields is a dictionary of { name : value } for regular form fields.
+    files is a dictionary of { name : ( filename, content_type, value) } for data to be uploaded as files
+    Return (content_type, body) ready for httplib.HTTPContent instance
+    """
+    BOUNDARY = '----------ThIs_Is_tHe_bouNdaRY_$'
+    CRLF = '\r\n'
+    L = []
+    for key in sorted(fields.keys()):
+        value = fields[key]
+        L.append('--' + BOUNDARY)
+        L.append('Content-Disposition: form-data; name="%s"' % key)
+        L.append('')
+        L.append(value)
+    for key in sorted(files.keys()):
+        (filename, content_type, value) = files[key]
+        L.append('--' + BOUNDARY)
+        L.append('Content-Disposition: form-data; name="%s"; filename="%s"' % (key, filename))
+        L.append('Content-Type: %s' % content_type)
+        L.append('')
+        L.append(value)
+    L.append('--' + BOUNDARY + '--')
+    L.append('')
+    body = CRLF.join(L)
+    content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
+    return content_type, body
+
+# General Utility Functions
+# =========================
+
+def make_filename(description):
+    filename = re.sub(r"\s+", "-", description)
+    filename = re.sub(r"[^A-Za-z0-9-]+", "", filename)
+    filename = filename[0:50]
+
+    return filename
+
+def edit(filename):
+    editor = None
+    if 'GIT_EDITOR' in os.environ:
+        editor = os.environ['GIT_EDITOR']
+    if editor == None:
+        try:
+            editor = global_repo.git.config('core.editor', get=True)
+        except git.errors.GitCommandError:
+            pass
+    if editor == None and 'EDITOR' in os.environ:
+        editor = os.environ['EDITOR']
+    if editor == None:
+        editor = "vi"
+
+    process = subprocess.Popen(editor + " " + filename, shell=True)
+    process.wait()
+    if process.returncode != 0:
+        die("Editor exited with non-zero return code")
+
+def prompt(message):
+    print message, "[yn] ",
+    line = sys.stdin.readline().strip()
+    return line == 'y' or line == 'Y'
+
+def die(message):
+    print >>sys.stderr, message
+    sys.exit(1)
+
+# Classes for bug handling
+# ========================
+
+class BugPatch(object):
+    def __init__(self, attach_id, description, date):
+        self.attach_id = attach_id
+        self.description = description
+        self.date = date
+
+class Bug(object):
+    def __init__(self, host, https):
+        self.host = host
+        self.https = https
+        self.id = None
+        self.product = None
+        self.component = None
+        self.short_desc = None
+        self.patches = []
+
+        self.cookies = get_bugzilla_cookies(host)
+        if self.https:
+            self.connection = HTTPSConnection(self.host, 443)
+        else:
+            self.connection = HTTPConnection(self.host, 80)
+
+    def _send_request(self, method, url, data=None, headers={}):
+        headers = dict(headers)
+        cookie_string = ("Bugzilla_login=%s; Bugzilla_logincookie=%s" %
+                         (self.cookies['Bugzilla_login'], self.cookies['Bugzilla_logincookie']))
+        headers['Cookie'] = cookie_string
+        headers['User-Agent'] = "git-bz"
+
+        self.connection.request(method, url, data, headers)
+
+    def _send_post(self, url, fields, files):
+        content_type, body = encode_multipart_formdata(fields, files)
+        self._send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
+
+    def _load(self, id):
+        url = "/show_bug.cgi?id=" + id + "&ctype=xml"
+
+        self._send_request("GET", url)
+
+        response = self.connection.getresponse()
+
+        if response.status != 200:
+            die ("Failed to retrieve bug information: %d" % response.status)
+
+        etree = ElementTree()
+        etree.parse(response)
+
+        bug = etree.find("bug")
+        error = bug.get("error")
+        if error != None:
+            die ("Failed to retrieve bug information: %s" % error)
+
+        self.id = int(bug.find("bug_id").text)
+        self.short_desc = bug.find("short_desc").text
+
+        for attachment in bug.findall("attachment"):
+            if attachment.get("ispatch") == "1" and not attachment.get("isobsolete") == "1" :
+                attach_id = int(attachment.find("attachid").text)
+                description = attachment.find("desc").text
+                date = attachment.find("date").text
+                self.patches.append(BugPatch(attach_id, description, date))
+
+    def _create(self, product, component, short_desc, comment, default_fields):
+        fields = dict(default_fields)
+        fields['product'] = product
+        fields['component'] = component
+        fields['short_desc'] = short_desc
+        fields['comment'] = comment
+
+        files = {}
+
+        self._send_post("/post_bug.cgi", fields, files)
+
+        response = self.connection.getresponse()
+        response_data = response.read()
+
+        if response.status != 200:
+            print response_data
+            die("Failed to create bug: %d" % response.status)
+
+        m = re.search(r"<title>\s*Bug\s+([0-9]+)", response_data)
+        if not m:
+            print response_data
+            die("Filing bug failed")
+
+        self.id = int(m.group(1))
+
+        print "Successfully created"
+        print "Bug %d - %s" % (self.id, short_desc)
+        print "http://%s/show_bug.cgi?id=%d" % (self.host, self.id)
+
+    def create_patch(self, description, comment, filename, data):
+        fields = {}
+        fields['bugid'] = str(self.id)
+        fields['action'] = 'insert'
+        fields['ispatch'] = '1'
+        fields['description'] = description
+        if comment:
+            fields['comment'] = comment
+
+        files = {}
+        files['data'] = (filename, 'text/plain', data)
+
+        self._send_post("/attachment.cgi", fields, files)
+
+        response = self.connection.getresponse()
+        response_data = response.read()
+
+        if response.status != 200:
+            die ("Failed to attach bug: %d" % response.status)
+
+        print "Attached %s" % filename
+
+    def download_patch(self, patch):
+        self._send_request("GET", "/attachment.cgi?id=" + str(patch.attach_id))
+
+        response = self.connection.getresponse()
+        if response.status != 200:
+            die ("Failed to download attachment %s: %d" % (patch.attach_id, response.status))
+
+        return response.read()
+
+    @staticmethod
+    def load(bug_reference):
+        (host, https, id) = resolve_bug_reference(bug_reference)
+
+        bug = Bug(host, https)
+        bug._load(id)
+
+        return bug
+
+    @staticmethod
+    def create(tracker, product, component, short_desc, comment):
+        host = resolve_host_alias(tracker)
+        https = tracker_uses_https(tracker)
+        default_fields = get_default_fields(tracker)
+
+        bug = Bug(host, https)
+        bug._create(product, component, short_desc, comment, default_fields)
+
+        return bug
+
+# The Commands
+# =============
+
+def do_apply(bug_reference):
+    bug = Bug.load(bug_reference)
+
+    print "Bug %d - %s" % (bug.id, bug.short_desc)
+    print
+
+    for patch in bug.patches:
+        print patch.description
+        if not prompt("Apply?"):
+            continue
+
+        print
+
+        patch_contents = bug.download_patch(patch)
+        handle, filename = tempfile.mkstemp(".patch", make_filename(patch.description) + "-")
+        f = os.fdopen(handle, "w")
+        f.write(patch_contents)
+        f.close()
+
+        process = subprocess.Popen(['git', 'am', filename])
+        process.wait()
+        if process.returncode != 0:
+            print "Patch left in %s" % filename
+            break
+
+        os.remove(filename)
+
+def attach_commits(bug, commits, include_comments=True):
+    # We want to attach the patches in chronological order
+    commits = list(commits)
+    commits.reverse()
+
+    for commit in commits:
+        filename = make_filename(commit.message) + ".patch"
+        patch = get_patch(commit)
+        if include_comments:
+            body = get_body(commit)
+        else:
+            body = None
+        bug.create_patch(commit.message, body, filename, patch)
+
+def do_attach(bug_reference, since_or_revision_range):
+    bug = Bug.load(bug_reference)
+
+    print "Bug %d - %s" % (bug.id, bug.short_desc)
+    print
+
+    commits = get_commits(since_or_revision_range)
+    for commit in commits:
+        print commit.id[0:7], commit.message
+
+    print
+    if not prompt("Attach?"):
+        print "Aborting"
+        sys.exit(0)
+
+    attach_commits(bug, commits)
+
+def do_file(product_component, since_or_revision_range):
+    m = re.match("([^/\s]+)/([^/\s]+)", product_component)
+    if not m:
+        die("'%s' is not a valid <product>/<component> pair" % product_component)
+    product = m.group(1)
+    component = m.group(2)
+
+    commits = get_commits(since_or_revision_range)
+
+    template = StringIO()
+    if len(commits) == 1:
+        template.write(commits[0].message)
+        template.write("\n\n")
+        template.write(get_body(commits[0]))
+        template.write("\n")
+    template.write("""
+# Please enter the summary (first line) and description (other lines). Lines
+# starting with '#' will be ignored.  Delete everything to abort.
+#
+# Product: %(product)s
+# Component: %(component)s
+# Patches to be attached:
+""" % { 'product': product, 'component': component })
+    for commit in commits:
+        template.write("#   " + commit.id[0:7] + " " + commit.message + "\n")
+
+    handle, filename = tempfile.mkstemp(".txt", "git-bz-")
+    f = os.fdopen(handle, "w")
+    f.write(template.getvalue())
+    f.close()
+
+    edit(filename)
+
+    f = open(filename, "r")
+    lines = filter(lambda x: not x.startswith("#"), f.readlines())
+    f.close()
+
+    i = 0
+    summary = ""
+    while i < len(lines):
+        summary = lines[i].strip()
+        if summary != "":
+            break
+        i += 1
+
+    if summary == "":
+        die("Empty summary, aborting")
+
+    description = "".join(lines[i + 1:]).strip()
+
+    if global_options.bugzilla:
+        tracker = global_options.bugzilla
+    else:
+        tracker = get_default_tracker()
+
+    bug = Bug.create(tracker, product, component, summary, description)
+
+    attach_commits(bug, commits, include_comments=(len(commits) > 1))
+
+################################################################################
+
+if len(sys.argv) > 1:
+    command = sys.argv[1]
+else:
+    command = ''
+
+sys.argv[1:2] = []
+
+parser = OptionParser()
+
+def add_num_option():
+    parser.add_option("", "--num", metavar="N",
+                      help="limit number of patches to attach (can abbreviate to -<N>)")
+    for i, arg in enumerate(sys.argv):
+        m = re.match("-([0-9]+)", arg)
+        if m:
+            sys.argv[i] = "--num=" + m.group(1)
+
+if command == 'apply':
+    parser.set_usage("git bz apply [options] <bug reference>");
+    n_args = 1
+elif command == 'attach':
+    parser.set_usage("git bz attach [-<N>] [options] <bug reference> [<since | <revision range>]");
+    add_num_option()
+    n_args = 2
+elif command == 'file':
+    parser.set_usage("git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]");
+    parser.add_option("-b", "--bugzilla", metavar="HOST_OR_ALIAS",
+                      help="bug tracker to file bug on")
+    add_num_option()
+    n_args = 2
+else:
+    print >>sys.stderr, "Usage: git bz [apply|attach|file] [options]"
+    sys.exit(1)
+
+options, args = parser.parse_args()
+
+if len(args) != n_args:
+    parser.print_usage()
+    sys.exit(1)
+
+global_repo = git.Repo()
+
+if command == 'apply':
+    do_apply(*args)
+if command == 'attach':
+    do_attach(*args)
+elif command == 'file':
+    do_file(*args)
+
+sys.exit(0)
