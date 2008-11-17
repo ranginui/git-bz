@@ -12,11 +12,20 @@ Allow editing comment used for attachments
  able to edit the comment to say what has changed. 'attach' should
  support -e/--edit to do this.
 
- Also, you should be able to specify obsoletes - I think it would
- be interactive - if you passed -o/--obsolete it would display 
- a numbered list of patches and you'd enter the number of the
- patch (or space separated list of numbers) of the patches to 
- obsolete.
+ In the edit buffer would be commented out lines:
+
+ # Obsoletes: 23212 - Frobinificate faster
+
+ That you could uncomment to obsolete old patches.
+
+Get rid of GitPython usage
+
+ We're using GitPython only at the very lowest level; it would be
+ 30-40 lines of code to replace it entirely which would make git-bz
+ much easier to install for people. And would also allow some
+ improvements (display command output on error, for example) and
+ allow removing some cases where we drop out to subprocess to get
+ around limitations in the GitPython cmd module.
 
 Use XML-RPC when available.
 
