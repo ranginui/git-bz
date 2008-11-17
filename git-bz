@@ -154,7 +154,7 @@ DEFAULT_CONFIG = \
 """
 default-assigned-to =
 default-bug-file-loc =
-default-bug-severity =
+default-bug-severity = normal
 default-op-sys = All
 default-priority = P5
 default-rep-platform = All
