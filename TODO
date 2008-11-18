@@ -6,6 +6,12 @@ any intention of working on it myself.
 
 - Owen
 
+For attach -u don't include URL in the bugzilla comments
+
+ For 'git bz attach -u', it's just noise to have the URL in the 
+ bugzilla comment; simple: use the body *before* we add the URL
+ as the comment, not the body after.
+
 Allow editing comment used for attachments
 
  When attaching a revised version of a patch, you really want to be
