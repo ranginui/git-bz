@@ -18,15 +18,6 @@ Allow editing comment used for attachments
 
  That you could uncomment to obsolete old patches.
 
-Get rid of GitPython usage
-
- We're using GitPython only at the very lowest level; it would be
- 30-40 lines of code to replace it entirely which would make git-bz
- much easier to install for people. And would also allow some
- improvements (display command output on error, for example) and
- allow removing some cases where we drop out to subprocess to get
- around limitations in the GitPython cmd module.
-
 Use XML-RPC when available.
 
   Maybe use python-bugzilla: http://fedorahosted.org/python-bugzilla/

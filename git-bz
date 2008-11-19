@@ -24,8 +24,7 @@
 #
 # Installation
 # ============
-# Copy or symlink somewhere in your path. You'll need to have GitPython installed.
-# See: http://gitorious.org/projects/git-python/
+# Copy or symlink somewhere in your path.
 #
 # Usage
 # =====
@@ -183,14 +182,13 @@ default-priority = ---
 ################################################################################
 
 from ConfigParser import RawConfigParser
-import git
 from httplib import HTTPConnection, HTTPSConnection
 from optparse import OptionParser
 import os
 from pysqlite2 import dbapi2 as sqlite
 import re
 from StringIO import StringIO
-import subprocess
+from subprocess import Popen, CalledProcessError, PIPE
 import sys
 import tempfile
 import time
@@ -201,30 +199,107 @@ from xml.etree.cElementTree import ElementTree
 # Globals
 # =======
 
-# git.Repo() instance
-global_repo = None
-
 # options dictionary from optparse
 global_options = None
 
 # Utility functions for git
 # =========================
 
+# Run a git command
+#    Non-keyword arguments are passed verbatim as command line arguments
+#    Keyword arguments are turned into command line options
+#       <name>=True => --<name>
+#       <name>='<str>' => --<name>=<str>
+#    Special keyword arguments:
+#       _quiet: Discard all output even if an error occurs
+#       _interactive: Don't capture stdout and stderr
+#       _input=<str>: Feed <str> to stdinin of the command
+#
+def git_run(command, *args, **kwargs):
+    to_run = ['git', command.replace("_", "-")]
+
+    interactive = False
+    quiet = False
+    input = None
+    interactive = False
+    for (k,v) in kwargs.iteritems():
+        if k == '_quiet':
+            quiet = True
+        elif k == '_interactive':
+            interactive = True
+        elif k == '_input':
+            input = v
+        elif v is True:
+            to_run.append("--" + k.replace("_", "-"))
+        else:
+            to_run.append("--" + k.replace("_", "-") + "=" + v)
+
+    to_run.extend(args)
+
+    process = Popen(to_run,
+                    stdout=(None if interactive else PIPE),
+                    stderr=(None if interactive else PIPE),
+                    stdin=(PIPE if (input != None) else None))
+    output, error = process.communicate(input)
+    if process.returncode != 0:
+        if not quiet and not interactive:
+            print >>sys.stderr, error,
+            print output,
+        raise CalledProcessError(process.returncode, " ".join(to_run))
+
+    if interactive:
+        return None
+    else:
+        return output.strip()
+
+# Wrapper to allow us to do git.<command>(...) instead of git_run()
+class Git:
+    def __getattr__(self, command):
+        def f(*args, **kwargs):
+            return git_run(command, *args, **kwargs)
+        return f
+
+git = Git()
+
+class GitCommit:
+    def __init__(self, id, subject):
+        self.id = id
+        self.subject = subject
+
+def rev_list_commits(*args, **kwargs):
+    kwargs_copy = dict(kwargs)
+    kwargs_copy['pretty'] = 'format:%s'
+    output = git.rev_list(*args, **kwargs_copy)
+    lines = output.split("\n")
+    if (len(lines) % 2 != 0):
+        raise RuntimeException("git rev-list didn't return an even number of lines")
+
+    result = []
+    for i in xrange(0, len(lines), 2):
+        m = re.match("commit\s+([A-Fa-f0-9]+)", lines[i])
+        if not m:
+            raise RuntimeException("Can't parse commit it '%s'", lines[i])
+        commit_id = m.group(1)
+        subject = lines[i + 1]
+        result.append(GitCommit(commit_id, subject))
+
+    return result
+
 def get_commits(since_or_revision_range):
     if global_options.num:
-        commits = git.Commit.find_all(global_repo, since_or_revision_range, max_count=global_options.num)
+        commits = rev_list_commits(since_or_revision_range, max_count=global_options.num)
     else:
         # git format-patch has special handling of specifying a single revision that is
         # different than git-rev-list. Match that.
         try:
             # See if the argument identifies a single revision
-            rev = global_repo.git.rev_parse(since_or_revision_range, verify=True)
+            rev = git.rev_parse(since_or_revision_range, verify=True, _quiet=True)
             revision_range = rev + ".."
-        except git.errors.GitCommandError:
+        except CalledProcessError:
             # If not, assume the argument is a range
             revision_range = since_or_revision_range
 
-        commits = git.Commit.find_all(global_repo, revision_range)
+        commits = rev_list_commits(revision_range)
 
     if len(commits) == 0:
         die("'%s' does not name any commits. Use HEAD^ to specify just the last commit" %
@@ -233,24 +308,24 @@ def get_commits(since_or_revision_range):
     return commits
 
 def get_patch(commit):
-    return global_repo.git.format_patch(commit.id + "^.." + commit.id, stdout=True)
+    return git.format_patch(commit.id + "^.." + commit.id, stdout=True)
 
 def get_body(commit):
-    return global_repo.git.log(commit.id + "^.." + commit.id, pretty="format:%b")
+    return git.log(commit.id + "^.." + commit.id, pretty="format:%b")
 
 # Per-tracker configuration variables
 # ===================================
 
 def get_default_tracker():
     try:
-        return global_repo.git.config('bz.default-tracker', get=True)
-    except git.errors.GitCommandError:
+        return git.config('bz.default-tracker', get=True)
+    except CalledProcessError:
         return 'bugzilla.gnome.org'
 
 def resolve_host_alias(alias):
     try:
-        return global_repo.git.config('bz-tracker.' + alias + '.host', get=True)
-    except git.errors.GitCommandError:
+        return git.config('bz-tracker.' + alias + '.host', get=True)
+    except CalledProcessError:
         return alias
 
 def split_local_config(config_text):
@@ -275,8 +350,8 @@ def split_local_config(config_text):
 def get_git_config(name):
     try:
         name = name.replace(".", r"\.")
-        config_options = global_repo.git.config(r'bz-tracker\.' + name + r'\..*', get_regexp=True)
-    except git.errors.GitCommandError:
+        config_options = git.config(r'bz-tracker\.' + name + r'\..*', get_regexp=True)
+    except CalledProcessError:
         return {}
 
     result = {}
@@ -436,15 +511,15 @@ def edit(filename):
         editor = os.environ['GIT_EDITOR']
     if editor == None:
         try:
-            editor = global_repo.git.config('core.editor', get=True)
-        except git.errors.GitCommandError:
+            editor = git.config('core.editor', get=True)
+        except CalledProcessError:
             pass
     if editor == None and 'EDITOR' in os.environ:
         editor = os.environ['EDITOR']
     if editor == None:
         editor = "vi"
 
-    process = subprocess.Popen(editor + " " + filename, shell=True)
+    process = Popen(editor + " " + filename, shell=True)
     process.wait()
     if process.returncode != 0:
         die("Editor exited with non-zero return code")
@@ -619,9 +694,9 @@ class Bug(object):
 
 def check_add_url(commits):
     try:
-        global_repo.git.diff(exit_code=True)
-        global_repo.git.diff(exit_code=True, cached=True)
-    except git.errors.GitCommandError:
+        git.diff(exit_code=True)
+        git.diff(exit_code=True, cached=True)
+    except CalledProcessError:
         die("You must commit (or stash) all changes before using -u/--add-url")
 
     # We should check that all the commits are ancestors of the current
@@ -631,50 +706,38 @@ def check_add_url(commits):
 def add_url(bug, commits):
     oldest_commit = commits[-1]
 
-    newer_commits = git.Commit.find_all(global_repo, commits[0].id + "..HEAD")
+    newer_commits = rev_list_commits(commits[0].id + "..HEAD")
 
     head_id = newer_commits[0].id if newer_commits else oldest_commit.id
 
     try:
         print "Resetting to the parent revision"
-        global_repo.git.reset(oldest_commit.id + "^", hard=True)
+        git.reset(oldest_commit.id + "^", hard=True)
 
         for commit in reversed(commits):
             body = get_body(commit)
 
             if str(bug.id) in body:
-                print "Recommitting", commit.id[0:7], commit.message, "(already has bug #)"
-                global_repo.git.cherry_pick(commit.id)
+                print "Recommitting", commit.id[0:7], commit.subject, "(already has bug #)"
+                git.cherry_pick(commit.id)
                 # Find the new commit ID, though it doesn't matter much here
-                commit.id = global_repo.git.rev_list("HEAD^!")
+                commit.id = git.rev_list("HEAD^!")
                 continue
 
-            print "Adding URL  ", commit.id[0:7], commit.message
-            global_repo.git.cherry_pick(commit.id)
+            print "Adding URL  ", commit.id[0:7], commit.subject
+            git.cherry_pick(commit.id)
 
-            process = subprocess.Popen(['git', 'commit', '--file=-', '--amend'],
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-            process.stdin.write(commit.message)
-            process.stdin.write("\n\n")
-            process.stdin.write(body)
-            process.stdin.write("\n\n")
-            process.stdin.write(bug.get_url())
-            process.stdin.close()
-            # Discard output
-            process.stdout.read()
-            process.stdout.close()
-            process.wait()
-            if process.returncode != 0:
-                raise RuntimeException("git commit --amend failed")
+            input = commit.subject + "\n\n" + body + "\n\n" + bug.get_url()
+            git.commit(file="-", amend=True, _input=input)
 
             # In this case, we need the new commit ID, so that when we later format the
             # patch, we format the patch with the added bug URL
-            commit.id = global_repo.git.rev_list("HEAD^!")
+            commit.id = git.rev_list("HEAD^!")
 
         for commit in reversed(newer_commits):
-            print "Recommitting", commit.id[0:7], commit.message
-            global_repo.git.cherry_pick(commit.id)
-            commit.id = global_repo.git.rev_list("HEAD^!")
+            print "Recommitting", commit.id[0:7], commit.subject
+            git.cherry_pick(commit.id)
+            commit.id = git.rev_list("HEAD^!")
     except:
         traceback.print_exc(None, sys.stderr)
         print >>sys.stderr
@@ -693,7 +756,7 @@ def do_add_url(bug_reference, since_or_revision_range):
     print
 
     for commit in commits:
-        print commit.id[0:7], commit.message
+        print commit.id[0:7], commit.subject
 
     print
     if not prompt("Add bug URL to above commits?"):
@@ -722,9 +785,9 @@ def do_apply(bug_reference):
         f.write(patch_contents)
         f.close()
 
-        process = subprocess.Popen(['git', 'am', filename])
-        process.wait()
-        if process.returncode != 0:
+        try:
+            process = git.am(filename, _interactive=True)
+        except CalledProcessError:
             print "Patch left in %s" % filename
             break
 
@@ -732,7 +795,7 @@ def do_apply(bug_reference):
 
         if global_options.add_url:
             # Slightly hacky, would be better to just commit right the first time
-            commits = git.Commit.find_all(global_repo, "HEAD^!")
+            commits = rev_list_commits("HEAD^!")
             add_url(bug, commits)
 
 def strip_bug_url(bug, commit_body):
@@ -749,13 +812,13 @@ def attach_commits(bug, commits, include_comments=True):
     commits.reverse()
 
     for commit in commits:
-        filename = make_filename(commit.message) + ".patch"
+        filename = make_filename(commit.subject) + ".patch"
         patch = get_patch(commit)
         if include_comments:
             body = strip_bug_url(bug, get_body(commit))
         else:
             body = None
-        bug.create_patch(commit.message, body, filename, patch)
+        bug.create_patch(commit.subject, body, filename, patch)
 
 def do_attach(bug_reference, since_or_revision_range):
     commits = get_commits(since_or_revision_range)
@@ -768,7 +831,7 @@ def do_attach(bug_reference, since_or_revision_range):
     print
 
     for commit in commits:
-        print commit.id[0:7], commit.message
+        print commit.id[0:7], commit.subject
 
     print
     if not prompt("Attach?"):
@@ -794,7 +857,7 @@ def do_file(product_component, since_or_revision_range):
 
     template = StringIO()
     if len(commits) == 1:
-        template.write(commits[0].message)
+        template.write(commits[0].subject)
         template.write("\n\n")
         template.write(get_body(commits[0]))
         template.write("\n")
@@ -807,7 +870,7 @@ def do_file(product_component, since_or_revision_range):
 # Patches to be attached:
 """ % { 'product': product, 'component': component })
     for commit in commits:
-        template.write("#   " + commit.id[0:7] + " " + commit.message + "\n")
+        template.write("#   " + commit.id[0:7] + " " + commit.subject + "\n")
 
     handle, filename = tempfile.mkstemp(".txt", "git-bz-")
     f = os.fdopen(handle, "w")
@@ -897,8 +960,6 @@ global_options, args = parser.parse_args()
 if len(args) != n_args:
     parser.print_usage()
     sys.exit(1)
-
-global_repo = git.Repo()
 
 if command == 'add-url':
     do_add_url(*args)
