@@ -270,7 +270,10 @@ def rev_list_commits(*args, **kwargs):
     kwargs_copy = dict(kwargs)
     kwargs_copy['pretty'] = 'format:%s'
     output = git.rev_list(*args, **kwargs_copy)
-    lines = output.split("\n")
+    if output == "":
+        lines = []
+    else:
+        lines = output.split("\n")
     if (len(lines) % 2 != 0):
         raise RuntimeException("git rev-list didn't return an even number of lines")
 
