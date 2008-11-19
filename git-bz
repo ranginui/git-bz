@@ -571,7 +571,14 @@ class Bug(object):
         response_data = response.read()
 
         if response.status != 200:
-            die ("Failed to attach bug: %d" % response.status)
+            die ("Failed to attach patch to bug: status=%d" % response.status)
+
+        # We hope that this is constant across bugzilla versions for a
+        # successful attachment
+        m = re.search(r"<title>\s*Changes\s+Submitted", response_data)
+        if not m:
+            print response_data
+            die ("Failed to attach patch to bug")
 
         print "Attached %s" % filename
 
