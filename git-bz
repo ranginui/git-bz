@@ -735,6 +735,14 @@ def do_apply(bug_reference):
             commits = git.Commit.find_all(global_repo, "HEAD^!")
             add_url(bug, commits)
 
+def strip_bug_url(bug, commit_body):
+    # Strip off the trailing bug URLs we add with -u; we do this before
+    # using commit body in as a comment; doing it by stripping right before
+    # posting means that we are robust against someone running add-url first
+    # and attach second.
+    pattern = "\s*" + re.escape(bug.get_url()) + "\s*$"
+    return re.sub(pattern, "", commit_body)
+
 def attach_commits(bug, commits, include_comments=True):
     # We want to attach the patches in chronological order
     commits = list(commits)
@@ -744,7 +752,7 @@ def attach_commits(bug, commits, include_comments=True):
         filename = make_filename(commit.message) + ".patch"
         patch = get_patch(commit)
         if include_comments:
-            body = get_body(commit)
+            body = strip_bug_url(bug, get_body(commit))
         else:
             body = None
         bug.create_patch(commit.message, body, filename, patch)
