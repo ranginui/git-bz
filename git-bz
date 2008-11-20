@@ -441,7 +441,11 @@ def get_bugzilla_cookies(host):
     cp = RawConfigParser()
     cp.read(os.path.join(profiles_dir, "profiles.ini"))
     for section in cp.sections():
-        if cp.has_option(section, "Default") and cp.get(section, "Default").strip() == "1":
+        if not cp.has_option(section, "Path"):
+            continue
+
+        if profile_path is None or (
+            cp.has_option(section, "Default") and cp.get(section, "Default").strip() == "1"):
             profile_path = os.path.join(profiles_dir, cp.get(section, "Path").strip())
 
     if not profile_path:
