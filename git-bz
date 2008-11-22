@@ -77,12 +77,13 @@
 #       # to include the bug URL. (See 'git bz add-url')
 #       git bz attach -u bugzilla.gnome.org:1234 b50ea9bd -1
 #
-#  git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]
+#  git bz file [-<N>] [options] [[<product>]/<component>] [<since> | <revision range>]
 #
 #     Like 'attach', but files a new bug. Opens an editor for the user to
 #     enter the summary and description for the bug. If only a single commit
 #     is named summary defaults to the subject of the commit, and the description
-#     to the body of the bug
+#     to the body of the bug. The product and component must be specified unless
+#     you have configured defaults.
 #
 #     Examples:
 #
@@ -121,6 +122,19 @@
 # And you can set the default bug tracker with:
 #
 #   git config --global bz.default-tracker bgo
+#
+# Per-repository configuration
+# ============================
+# Setting the default tracker, product and component in the local
+# config for a repository can be useful:
+#
+#   git config bz.default-tracker bugzilla.gnome.org
+#   git config bz-tracker.bugzilla.gnome.org.default-product gnome-shell
+#   git config bz-tracker.bugzilla.gnome.org.default-component general
+#
+# (The default-product and default-component values must always be
+# specified within the config for a particular tracker.) Note the
+# absence of the --global options.
 #
 # Per Tracker Configuration
 # =========================
@@ -853,12 +867,34 @@ def do_attach(bug_reference, since_or_revision_range):
 
     attach_commits(bug, commits)
 
-def do_file(product_component, since_or_revision_range):
-    m = re.match("([^/]+)/([^/]+)", product_component)
-    if not m:
-        die("'%s' is not a valid <product>/<component> pair" % product_component)
-    product = m.group(1)
-    component = m.group(2)
+def do_file(*args):
+    if len(args) == 1:
+        product_component, since_or_revision_range = None, args[0]
+    else:
+        product_component, since_or_revision_range = args[0], args[1]
+
+    config = get_config(get_tracker())
+
+    if product_component:
+        m = re.match("(?:([^/]+)/)?([^/]+)", product_component)
+        if not m:
+            die("'%s' is not a valid [<product>/]<component>" % product_component)
+
+        product = m.group(1)
+        component = m.group(2)
+
+        if not product:
+            if not 'default-product' in config:
+                die("'%s' does not specify a product and no default product is configured" % product_component)
+            product = config['default-product']
+    else:
+        if not 'default-product' in config:
+            die("[<product>/]<component> not specified and no default product is configured")
+        if not 'default-component' in config:
+            die("[<product>/]<component> not specified and no default component is configured")
+
+        product = config['default-product']
+        component = config['default-component']
 
     commits = get_commits(since_or_revision_range)
 
@@ -941,28 +977,29 @@ def add_add_url_option():
 if command == 'add-url':
     parser.set_usage("git bz add-url [-<N>] [options] <bug reference> [<since | <revision range>]");
     add_num_option()
-    n_args = 2
+    min_args = max_args = 2
 elif command == 'apply':
     parser.set_usage("git bz apply [options] <bug reference>");
     add_add_url_option()
-    n_args = 1
+    min_args = max_args = 1
 elif command == 'attach':
     parser.set_usage("git bz attach [-<N>] [options] <bug reference> [<since | <revision range>]");
     add_add_url_option()
     add_num_option()
-    n_args = 2
+    min_args = max_args = 2
 elif command == 'file':
     parser.set_usage("git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]");
     add_add_url_option()
     add_num_option()
-    n_args = 2
+    min_args = 1
+    max_args = 2
 else:
     print >>sys.stderr, "Usage: git bz [add-url|apply|attach|file] [options]"
     sys.exit(1)
 
 global_options, args = parser.parse_args()
 
-if len(args) != n_args:
+if len(args) < min_args or len(args) > max_args:
     parser.print_usage()
     sys.exit(1)
 
