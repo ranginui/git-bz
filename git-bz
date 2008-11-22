@@ -117,26 +117,27 @@
 # =======
 # You can create short aliases for different bug trackers as follows
 #
-#   git config --global bz-tracker.bgo.host bugzilla.gnome.org
+#   git config --global bz-tracker.gnome.host bugzilla.gnome.org
 #
 # And you can set the default bug tracker with:
 #
-#   git config --global bz.default-tracker bgo
+#   git config --global bz.default-tracker gnome
 #
-# Per-repository configuration
+# Per-Repository configuration
 # ============================
 # Setting the default tracker, product and component in the local
-# config for a repository can be useful:
+# config for a repository can be useful. Assuming that a global
+# 'gnome' alias has been set up as above:
 #
-#   git config bz.default-tracker bugzilla.gnome.org
-#   git config bz-tracker.bugzilla.gnome.org.default-product gnome-shell
-#   git config bz-tracker.bugzilla.gnome.org.default-component general
+#   git config bz.default-tracker gnome
+#   git config bz-tracker.gnome.default-product gnome-shell
+#   git config bz-tracker.gnome.default-component general
 #
 # (The default-product and default-component values must always be
 # specified within the config for a particular tracker.) Note the
 # absence of the --global options.
 #
-# Per Tracker Configuration
+# Per-Tracker Configuration
 # =========================
 # git-bz needs some configuration specific to the bugzilla instance (tracker),
 # in particular it needs to know initial field values to use when submitting
@@ -150,7 +151,7 @@
 #
 # 1) git configuration variables specified for the alias.
 #
-#    git config --global bz-tracker.bgo.default-bug-severity trivial
+#    git config --global bz-tracker.gnome.default-bug-severity trivial
 #
 # 2) git configuration variables specified for the host
 #
