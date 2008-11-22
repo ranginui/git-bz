@@ -319,7 +319,10 @@ def get_body(commit):
 # Per-tracker configuration variables
 # ===================================
 
-def get_default_tracker():
+def get_tracker():
+    if global_options.bugzilla != None:
+        return global_options.bugzilla
+
     try:
         return git.config('bz.default-tracker', get=True)
     except CalledProcessError:
@@ -422,7 +425,7 @@ def resolve_bug_reference(bug_reference):
         tracker = bug_reference[0:colon]
         id = bug_reference[colon + 1:]
     else:
-        tracker = get_default_tracker()
+        tracker = get_tracker()
         id = bug_reference
 
     host = resolve_host_alias(tracker)
@@ -903,12 +906,7 @@ def do_file(product_component, since_or_revision_range):
 
     description = "".join(lines[i + 1:]).strip()
 
-    if global_options.bugzilla:
-        tracker = global_options.bugzilla
-    else:
-        tracker = get_default_tracker()
-
-    bug = Bug.create(tracker, product, component, summary, description)
+    bug = Bug.create(get_tracker(), product, component, summary, description)
 
     if global_options.add_url:
         add_url(bug, commits)
@@ -925,6 +923,8 @@ else:
 sys.argv[1:2] = []
 
 parser = OptionParser()
+parser.add_option("-b", "--bugzilla", metavar="HOST_OR_ALIAS",
+                  help="bug tracker to use")
 
 def add_num_option():
     parser.add_option("", "--num", metavar="N",
@@ -953,8 +953,6 @@ elif command == 'attach':
     n_args = 2
 elif command == 'file':
     parser.set_usage("git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]");
-    parser.add_option("-b", "--bugzilla", metavar="HOST_OR_ALIAS",
-                      help="bug tracker to file bug on")
     add_add_url_option()
     add_num_option()
     n_args = 2
