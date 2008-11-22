@@ -851,7 +851,7 @@ def do_attach(bug_reference, since_or_revision_range):
     attach_commits(bug, commits)
 
 def do_file(product_component, since_or_revision_range):
-    m = re.match("([^/\s]+)/([^/\s]+)", product_component)
+    m = re.match("([^/]+)/([^/]+)", product_component)
     if not m:
         die("'%s' is not a valid <product>/<component> pair" % product_component)
     product = m.group(1)
