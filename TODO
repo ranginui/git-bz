@@ -6,6 +6,25 @@ any intention of working on it myself.
 
 - Owen
 
+Reconsider initial description for 'git bz file'
+
+ Right now, if you have only a single patch, the initial description is the body 
+ of the bug, and the attachment is done without any other comment. (But
+ still adds a comment to the bug because every attachment has a comment.)
+
+ I often find I want to have a few sentences about why I'm making the
+ change different than the body of the commit (or ask someone to look at the
+ patch or something), so I've been adding extra text and a separator,
+ which leaves it unclear what the stuff after the separator is.
+
+ Better way to handle it:
+
+  - Start off the initial description empty in the editor
+  - If the user fills it in, use that as the initial description
+    and the body of the commit as the comment.
+  - If the user leaves it empty use the body as the initial description
+    as currently.
+
 Allow editing comment used for attachments
 
  When attaching a revised version of a patch, you really want to be
