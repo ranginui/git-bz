@@ -433,7 +433,7 @@ def get_default_fields(tracker):
 def resolve_bug_reference(bug_reference):
     m = re.match("http(s?)://([^/]+)/show_bug.cgi\?id=([^&]+)", bug_reference)
     if m:
-        return m.group(2), m.group(1) != None, m.group(3)
+        return m.group(2), m.group(1) != "", m.group(3)
 
     colon = bug_reference.find(":")
     if colon > 0:
