@@ -84,9 +84,8 @@
 #
 #     Like 'attach', but files a new bug. Opens an editor for the user to
 #     enter the summary and description for the bug. If only a single commit
-#     is named summary defaults to the subject of the commit, and the description
-#     to the body of the bug. The product and component must be specified unless
-#     you have configured defaults.
+#     is named, the summary defaults to the subject of the commit. The product and
+#     component must be specified unless you have configured defaults.
 #
 #     Examples:
 #
@@ -997,8 +996,6 @@ def do_file(*args):
     template = StringIO()
     if len(commits) == 1:
         template.write(commits[0].subject)
-        template.write("\n\n")
-        template.write(get_body(commits[0]))
         template.write("\n")
     template.write("""
 # Please enter the summary (first line) and description (other lines). Lines
@@ -1018,12 +1015,21 @@ def do_file(*args):
     if summary == "":
         die("Empty summary, aborting")
 
+    # If we have only one patch and no other description for the bug was
+    # specified, use the body of the commit as the the description for
+    # the bug rather than the descriptionfor the attachment
+    include_comments=True
+    if len(commits) == 1:
+        if description == "":
+            description = get_body(commits[0])
+            include_comments = False
+
     bug = Bug.create(get_tracker(), product, component, summary, description)
 
     if global_options.add_url:
         add_url(bug, commits)
 
-    attach_commits(bug, commits, include_comments=(len(commits) > 1))
+    attach_commits(bug, commits, include_comments=include_comments)
 
 ################################################################################
 
