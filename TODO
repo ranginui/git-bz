@@ -25,18 +25,6 @@ Reconsider initial description for 'git bz file'
   - If the user leaves it empty use the body as the initial description
     as currently.
 
-Allow editing comment used for attachments
-
- When attaching a revised version of a patch, you really want to be
- able to edit the comment to say what has changed. 'attach' should
- support -e/--edit to do this.
-
- In the edit buffer would be commented out lines:
-
- # Obsoletes: 23212 - Frobinificate faster
-
- That you could uncomment to obsolete old patches.
-
 Use XML-RPC when available.
 
   Maybe use python-bugzilla: http://fedorahosted.org/python-bugzilla/
