@@ -18,6 +18,12 @@ Default to -e/--edit when only one commit
  When there is only one commit to attach, we might as well default to
  -e/--edit - it's more powerful than the prompt and still allows aborting.
 
+Automatically guess obvious obsoletes
+
+ When doing attach -e/--edit, and there is an existing patch who's description
+ matches the Subject of the attachment, start the Obsoletes line
+ uncommented?
+
 Use XML-RPC when available.
 
   Maybe use python-bugzilla: http://fedorahosted.org/python-bugzilla/
