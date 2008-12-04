@@ -878,13 +878,14 @@ def strip_bug_url(bug, commit_body):
 
 def edit_attachment_comment(bug, initial_description, initial_body):
     template = StringIO()
+    template.write("# Attachment to Bug %d - %s\n\n" % (bug.id, bug.short_desc))
     template.write(initial_description)
     template.write("\n\n")
     template.write(initial_body)
     template.write("\n\n")
     if len(bug.patches) > 0:
         for patch in bug.patches:
-            template.write("#Obsoletes: %d -%s\n" % (patch.attach_id, patch.description))
+            template.write("#Obsoletes: %d - %s\n" % (patch.attach_id, patch.description))
         template.write("\n")
 
     template.write("""# Please edit the description (first line) and comment (other lines). Lines
@@ -939,16 +940,20 @@ def do_attach(bug_reference, since_or_revision_range):
 
     bug = Bug.load(bug_reference)
 
-    print "Bug %d - %s" % (bug.id, bug.short_desc)
-    print
+    # We always want to prompt if the user has specified multiple attachments.
+    # For the common case of one attachment don't prompt if we are going
+    # to give them a chance to edit and abort anyways.
+    if len(commits) > 1 or not global_options.edit:
+        print "Bug %d - %s" % (bug.id, bug.short_desc)
+        print
 
-    for commit in commits:
-        print commit.id[0:7], commit.subject
+        for commit in commits:
+            print commit.id[0:7], commit.subject
 
-    print
-    if not prompt("Attach?"):
-        print "Aborting"
-        sys.exit(0)
+        print
+        if not prompt("Attach?"):
+            print "Aborting"
+            sys.exit(0)
 
     if global_options.add_url:
         add_url(bug, commits)
