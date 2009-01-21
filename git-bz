@@ -104,8 +104,9 @@
 # ==============
 # In order to use git-bz you need to already be logged into the bug tracker
 # in your web browser, and git-bz reads your browser cookie. Currently only
-# Firefox 3 is supported, and only on Linux. Patches to add more support and
-# to allow configuring username/password directly per bug tracker accepted.
+# Firefox 3 and Epiphany are supported, and only on Linux. Patches to
+# add more support and to allow configuring username/password directly
+# per bug tracker accepted.
 #
 # Bug references
 # ==============
@@ -347,6 +348,13 @@ def commit_is_merge(commit):
 
     return parent_count > 1
 
+def get_browser():
+    try:
+        return git.config('bz.browser', get=True)
+    except CalledProcessError:
+        return 'firefox3'
+
+
 # Per-tracker configuration variables
 # ===================================
 
@@ -467,9 +475,8 @@ def resolve_bug_reference(bug_reference):
 
     return host, https, id
 
-def get_bugzilla_cookies(host):
-    profiles_dir = os.path.expanduser("~/.mozilla/firefox")
-
+def get_bugzilla_cookies_ff3(host):
+    profiles_dir = os.path.expanduser('~/.mozilla/firefox')
     profile_path = None
 
     cp = RawConfigParser()
@@ -487,7 +494,8 @@ def get_bugzilla_cookies(host):
 
     cookies_sqlite = os.path.join(profile_path, "cookies.sqlite")
     if not os.path.exists(cookies_sqlite):
-        die("%s doesn't exist. Only Firefox 3 is supported currently")
+        die("%s doesn't exist. Perhaps try git config bz.browser."
+            % cookies_sqlite)
 
     result = {}
 
@@ -503,9 +511,46 @@ def get_bugzilla_cookies(host):
     connection.close()
 
     if not ('Bugzilla_login' in result and 'Bugzilla_logincookie' in result):
-        die("You don't appear to be signed into %s; please log in with Firefox" % host)
+        die("You don't appear to be signed into %s; "
+            "please log in with Firefox or do 'git config bz.browser'"
+             % host)
 
     return result
+
+def get_bugzilla_cookies_epy(host):
+    ff_dir = os.path.expanduser('~/.gnome2/epiphany/mozilla/epiphany')
+    cookies_sqlite = os.path.join(ff_dir, "cookies.sqlite")
+    if not os.path.exists(cookies_sqlite):
+        die("%s doesn't exist. Perhaps try git config bz.browser."
+            % cookies_sqlite)
+
+    result = {}
+
+    connection = sqlite.connect(cookies_sqlite)
+    cursor = connection.cursor()
+    cursor.execute("select name,value,path,expiry from moz_cookies where host = :host", { 'host': host })
+
+    now = time.time()
+    for name,value,path,expiry in cursor.fetchall():
+        # Excessive caution: toss out values that need to be quoted in a cookie header
+        if float(expiry) > now and not re.search(r'[()<>@,;:\\"/\[\]?={} \t]', value):
+            result[name] = value
+    connection.close()
+
+    if not ('Bugzilla_login' in result and 'Bugzilla_logincookie' in result):
+        die("You don't appear to be signed into %s; please log in with Epiphany" % host)
+
+    return result
+
+def get_bugzilla_cookies(host):
+    d = {'firefox3': get_bugzilla_cookies_ff3,
+         'epiphany': get_bugzilla_cookies_epy}
+    browser = get_browser()
+    if browser in d:
+        do_get_cookies = d[browser]
+    else:
+        die('Unsupported browser %s (we only support %s)' % (browser, d.keys()))
+    return do_get_cookies(host)
 
 # Based on http://code.activestate.com/recipes/146306/ - Wade Leftwich
 def encode_multipart_formdata(fields, files):
