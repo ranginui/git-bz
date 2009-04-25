@@ -129,16 +129,15 @@
 # Per-Repository configuration
 # ============================
 # Setting the default tracker, product and component in the local
-# config for a repository can be useful. Assuming that a global
+# config for a repository is useful. Assuming that a global
 # 'gnome' alias has been set up as above:
 #
 #   git config bz.default-tracker gnome
-#   git config bz-tracker.gnome.default-product gnome-shell
-#   git config bz-tracker.gnome.default-component general
+#   git config bz.default-product gnome-shell
+#   git config bz.default-component general
 #
-# (The default-product and default-component values must always be
-# specified within the config for a particular tracker.) Note the
-# absence of the --global options.
+# Note the absence of --global; configuring a default product and component
+# globally is seldom useful.
 #
 # Per-Tracker Configuration
 # =========================
@@ -349,14 +348,14 @@ def commit_is_merge(commit):
 
     return parent_count > 1
 
+# Global configuration variables
+# ==============================
+
 def get_browser():
     try:
         return git.config('bz.browser', get=True)
     except CalledProcessError:
         return 'firefox3'
-
-# Per-tracker configuration variables
-# ===================================
 
 def get_tracker():
     if global_options.bugzilla != None:
@@ -366,6 +365,21 @@ def get_tracker():
         return git.config('bz.default-tracker', get=True)
     except CalledProcessError:
         return 'bugzilla.gnome.org'
+
+def get_default_product():
+    try:
+        return git.config('bz.default-product', get=True)
+    except CalledProcessError:
+        return None
+
+def get_default_component():
+    try:
+        return git.config('bz.default-component', get=True)
+    except CalledProcessError:
+        return None
+
+# Per-tracker configuration variables
+# ===================================
 
 def resolve_host_alias(alias):
     try:
@@ -1081,6 +1095,15 @@ def do_attach(bug_reference, since_or_revision_range):
 
     attach_commits(bug, commits, edit_comments=global_options.edit)
 
+PRODUCT_COMPONENT_HELP = """
+
+Use:
+
+  git config bz.default-product <product>
+  git config bz.default-component <component>
+
+to configure a default product and/or component for this module."""
+
 def do_file(*args):
     if len(args) == 1:
         product_component, since_or_revision_range = None, args[0]
@@ -1098,17 +1121,21 @@ def do_file(*args):
         component = m.group(2)
 
         if not product:
-            if not 'default-product' in config:
-                die("'%s' does not specify a product and no default product is configured" % product_component)
-            product = config['default-product']
-    else:
-        if not 'default-product' in config:
-            die("[<product>/]<component> not specified and no default product is configured")
-        if not 'default-component' in config:
-            die("[<product>/]<component> not specified and no default component is configured")
+            product = get_default_product()
 
-        product = config['default-product']
-        component = config['default-component']
+        if not product:
+            die("'%s' does not specify a product and no default product is configured" % product_component
+                + PRODUCT_COMPONENT_HELP)
+    else:
+        product = get_default_product()
+        component = get_default_component()
+
+        if not product:
+            die("[<product>/]<component> not specified and no default product is configured"
+                + PRODUCT_COMPONENT_HELP)
+        if not component:
+            die("[<product>/]<component> not specified and no default component is configured"
+                + PRODUCT_COMPONENT_HELP)
 
     commits = get_commits(since_or_revision_range)
 
