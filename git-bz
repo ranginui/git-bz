@@ -247,7 +247,10 @@ def git_run(command, *args, **kwargs):
         elif k == '_input':
             input = v
         elif v is True:
-            to_run.append("--" + k.replace("_", "-"))
+            if len(k) == 1:
+                to_run.append("-" + k)
+            else:
+                to_run.append("--" + k.replace("_", "-"))
         else:
             to_run.append("--" + k.replace("_", "-") + "=" + v)
 
@@ -332,6 +335,17 @@ def get_patch(commit):
 
 def get_body(commit):
     return git.log(commit.id + "^.." + commit.id, pretty="format:%b")
+
+def commit_is_merge(commit):
+    contents = git.cat_file("commit", commit.id)
+    parent_count = 0
+    for line in contents.split("\n"):
+        if line == "":
+            break
+        if line.startswith("parent "):
+            parent_count += 1
+
+    return parent_count > 1
 
 # Per-tracker configuration variables
 # ===================================
@@ -761,16 +775,50 @@ class Bug(object):
 # The Commands
 # =============
 
-def check_add_url(commits):
+def check_add_url(commits, bug_id=None, is_add_url=False):
+    if bug_id != None:
+        # We only need to check the commits that we'll add the URL to
+        def needs_url(commit):
+            body = get_body(commit)
+            return str(bug_id) not in body
+        commits = filter(needs_url, commits)
+
+    if len(commits) == 0: # Nothing to do
+        return
+
     try:
         git.diff(exit_code=True)
         git.diff(exit_code=True, cached=True)
     except CalledProcessError:
         die("You must commit (or stash) all changes before using -u/--add-url")
 
-    # We should check that all the commits are ancestors of the current
-    # current revision, and maybe also check make sure that there are no
-    # merge commits.
+    for commit in commits:
+        # check that the commit is an ancestor of the current revision
+        base = git.merge_base("HEAD", commit.id)
+        if base != commit.id:
+            die("%s %s\nNot an ancestor of HEAD, can't add bug URL to it" % (commit.id[0:7], commit.subject))
+
+        # see if the commit is present in any remote branches
+        remote_branches = git.branch(contains=commit.id, r=True)
+        if remote_branches != "":
+            print commit.id[0:7], commit.subject
+            print "Commit is already in remote branch(es):", " ".join(remote_branches.split())
+            if not prompt("Rewrite the commit add the bug URL anyways?"):
+                if is_add_url:
+                    print "Aborting."
+                else:
+                    print "Aborting. You can use --no-add-url to turn off adding the URL"
+                sys.exit(0)
+
+    # Check for merge commits
+    oldest_commit = commits[-1]
+    all_commits = rev_list_commits(commits[-1].id + "^..HEAD")
+    for commit in all_commits:
+        if commit_is_merge(commit):
+            print "Found merge commit:"
+            print commit.id[0:7], commit.subject
+            print "Can't rewrite this commit or an ancestor commit to add bug URL"
+            sys.exit(1)
 
 def add_url(bug, commits):
     oldest_commit = commits[-1]
@@ -816,9 +864,10 @@ def add_url(bug, commits):
 
 def do_add_url(bug_reference, since_or_revision_range):
     commits = get_commits(since_or_revision_range)
-    check_add_url(commits)
 
     bug = Bug.load(bug_reference)
+
+    check_add_url(commits, bug.id, is_add_url=True)
 
     print "Bug %d - %s" % (bug.id, bug.short_desc)
     print bug.get_url()
@@ -933,11 +982,11 @@ def attach_commits(bug, commits, include_comments=True, edit_comments=False):
         bug.create_patch(commit.subject, body, filename, patch, obsoletes=obsoletes)
 
 def do_attach(bug_reference, since_or_revision_range):
+    bug = Bug.load(bug_reference)
+
     commits = get_commits(since_or_revision_range)
     if global_options.add_url:
-        check_add_url(commits)
-
-    bug = Bug.load(bug_reference)
+        check_add_url(commits, bug.id, is_add_url=False)
 
     # We always want to prompt if the user has specified multiple attachments.
     # For the common case of one attachment don't prompt if we are going
@@ -991,7 +1040,7 @@ def do_file(*args):
     commits = get_commits(since_or_revision_range)
 
     if global_options.add_url:
-        check_add_url(commits)
+        check_add_url(commits, is_add_url=False)
 
     template = StringIO()
     if len(commits) == 1:
