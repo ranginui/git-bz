@@ -29,7 +29,7 @@
 # Usage
 # =====
 #
-#  git bz add-url [-<N>] [options] <bug reference> [<since | <revision range>]
+#  git bz add-url [options] <bug reference> [<commit> | <revision range>]
 #
 #    For each specified commit, rewrite the commit message to add the URL
 #    of the given bug. You should only do this if you haven't already pushed
@@ -39,7 +39,7 @@
 #    Example:
 #
 #       # Add a bug URL to the last commit
-#       git bz attach 1234 HEAD^
+#       git bz attach 1234 HEAD
 #
 #  git bz apply [options] <bug reference>
 #
@@ -56,12 +56,13 @@
 #       # Same, but add the bug URL to the commit messages
 #       git bz apply -u bugzillla.gnome.org:1234
 #
-#  git bz attach [-<N>] [options] <bug reference> [<since | <revision range>]
+#  git bz attach [options] <bug reference> [<commit> | <revision range>]
 #
 #    For each specified commit, formats as a patch and attaches to the
 #    specified bug, with the subject of the commit as the description and
-#    the body of the commit as the comment. The patch formatting and and
-#    specification of which commits are as for 'git format-patch'
+#    the body of the commit as the comment. The patch formatting is as
+#    for 'git format-patch'. Unlike 'git format-patch', specifying a single
+#    commit means just that commit, not everything after that commit.
 #
 #    Prompts before actually doing anything to avoid mistakes.
 #
@@ -71,16 +72,16 @@
 #    Examples:
 #
 #       # Attach the last commit
-#       git bz attach bugzilla.gnome.org:1234 HEAD^
+#       git bz attach bugzilla.gnome.org:1234 HEAD
 #
 #       # Attach everything starting at an old commit
-#       git bz attach bugzilla.gnome.org:1234 b50ea9bd^
+#       git bz attach bugzilla.gnome.org:1234 b50ea9bd^..
 #
 #       # Attach a single old commit and rewrite the commit message
 #       # to include the bug URL. (See 'git bz add-url')
-#       git bz attach -u bugzilla.gnome.org:1234 b50ea9bd -1
+#       git bz attach -u bugzilla.gnome.org:1234 b50ea9bd
 #
-#  git bz file [-<N>] [options] [[<product>]/<component>] [<since> | <revision range>]
+#  git bz file [options] [[<product>]/<component>] [<commit> | <revision range>]
 #
 #     Like 'attach', but files a new bug. Opens an editor for the user to
 #     enter the summary and description for the bug. If only a single commit
@@ -90,15 +91,15 @@
 #     Examples:
 #
 #       # File the last commit as a new bug on the default tracker
-#       git bz file my-product/some-component HEAD^
+#       git bz file my-product/some-component HEAD
 #
 #       # Same but rewrite the commit message to include the URL of the
 #       # newly filed bug. (See 'git bz add-url')
-#       git bz file -u my-product/some-component HEAD^
+#       git bz file -u my-product/some-component HEAD
 #
 #       # File a bug with a series of patches starting from an old commit
 #       # on a different bug tracker
-#       git bz -b bugs.freedesktop.org file my-product/some-component b50ea9bd^ -1
+#       git bz -b bugs.freedesktop.org file my-product/some-component b50ea9bd^..
 #
 # Authentication
 # ==============
@@ -309,25 +310,20 @@ def rev_list_commits(*args, **kwargs):
 
     return result
 
-def get_commits(since_or_revision_range):
-    if global_options.num:
-        commits = rev_list_commits(since_or_revision_range, max_count=global_options.num)
-    else:
-        # git format-patch has special handling of specifying a single revision that is
-        # different than git-rev-list. Match that.
-        try:
-            # See if the argument identifies a single revision
-            rev = git.rev_parse(since_or_revision_range, verify=True, _quiet=True)
-            revision_range = rev + ".."
-        except CalledProcessError:
-            # If not, assume the argument is a range
-            revision_range = since_or_revision_range
-
-        commits = rev_list_commits(revision_range)
+def get_commits(commit_or_revision_range):
+    # We take specifying a single revision to mean everything since that
+    # revision, while git-rev-list lists that revision and all ancestors
+    try:
+        # See if the argument identifies a single revision
+        rev = git.rev_parse(commit_or_revision_range, verify=True, _quiet=True)
+        commits = rev_list_commits(rev, max_count='1')
+    except CalledProcessError:
+        # If not, assume the argument is a range
+        commits = rev_list_commits(commit_or_revision_range)
 
     if len(commits) == 0:
-        die("'%s' does not name any commits. Use HEAD^ to specify just the last commit" %
-            since_or_revision_range)
+        die("'%s' does not name any commits. Use HEAD to specify just the last commit" %
+            commit_or_revision_range)
 
     return commits
 
@@ -949,8 +945,8 @@ def add_url(bug, commits):
         print >>sys.stderr, "To restore to the original state: git reset --hard %s" % head_id[0:12]
         sys.exit(1)
 
-def do_add_url(bug_reference, since_or_revision_range):
-    commits = get_commits(since_or_revision_range)
+def do_add_url(bug_reference, commit_or_revision_range):
+    commits = get_commits(commit_or_revision_range)
 
     bug = Bug.load(bug_reference)
 
@@ -1068,10 +1064,10 @@ def attach_commits(bug, commits, include_comments=True, edit_comments=False):
             obsoletes = []
         bug.create_patch(commit.subject, body, filename, patch, obsoletes=obsoletes)
 
-def do_attach(bug_reference, since_or_revision_range):
+def do_attach(bug_reference, commit_or_revision_range):
     bug = Bug.load(bug_reference)
 
-    commits = get_commits(since_or_revision_range)
+    commits = get_commits(commit_or_revision_range)
     if global_options.add_url:
         check_add_url(commits, bug.id, is_add_url=False)
 
@@ -1106,9 +1102,9 @@ to configure a default product and/or component for this module."""
 
 def do_file(*args):
     if len(args) == 1:
-        product_component, since_or_revision_range = None, args[0]
+        product_component, commit_or_revision_range = None, args[0]
     else:
-        product_component, since_or_revision_range = args[0], args[1]
+        product_component, commit_or_revision_range = args[0], args[1]
 
     config = get_config(get_tracker())
 
@@ -1137,7 +1133,7 @@ def do_file(*args):
             die("[<product>/]<component> not specified and no default component is configured"
                 + PRODUCT_COMPONENT_HELP)
 
-    commits = get_commits(since_or_revision_range)
+    commits = get_commits(commit_or_revision_range)
 
     if global_options.add_url:
         check_add_url(commits, is_add_url=False)
@@ -1193,14 +1189,6 @@ parser = OptionParser()
 parser.add_option("-b", "--bugzilla", metavar="HOST_OR_ALIAS",
                   help="bug tracker to use")
 
-def add_num_option():
-    parser.add_option("", "--num", metavar="N",
-                      help="limit number of patches to attach (can abbreviate to -<N>)")
-    for i, arg in enumerate(sys.argv):
-        m = re.match("-([0-9]+)", arg)
-        if m:
-            sys.argv[i] = "--num=" + m.group(1)
-
 def add_add_url_option():
     parser.add_option("-u", "--add-url", action="store_true",
                       help="rewrite commits to add the bug URL")
@@ -1210,23 +1198,20 @@ def add_edit_option():
                       help="allow editing the bugzilla comment")
 
 if command == 'add-url':
-    parser.set_usage("git bz add-url [-<N>] [options] <bug reference> [<since | <revision range>]");
-    add_num_option()
+    parser.set_usage("git bz add-url [options] <bug reference> [<since | <revision range>]");
     min_args = max_args = 2
 elif command == 'apply':
     parser.set_usage("git bz apply [options] <bug reference>");
     add_add_url_option()
     min_args = max_args = 1
 elif command == 'attach':
-    parser.set_usage("git bz attach [-<N>] [options] <bug reference> [<since | <revision range>]");
+    parser.set_usage("git bz attach [options] <bug reference> [<since | <revision range>]");
     add_add_url_option()
-    add_num_option()
     add_edit_option()
     min_args = max_args = 2
 elif command == 'file':
-    parser.set_usage("git bz file [-<N>] [options] <product>/<component> [<since> | <revision range>]");
+    parser.set_usage("git bz file [options] <product>/<component> [<since> | <revision range>]");
     add_add_url_option()
-    add_num_option()
     min_args = 1
     max_args = 2
 else:
