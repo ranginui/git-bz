@@ -354,7 +354,6 @@ def get_browser():
     except CalledProcessError:
         return 'firefox3'
 
-
 # Per-tracker configuration variables
 # ===================================
 
@@ -475,6 +474,28 @@ def resolve_bug_reference(bug_reference):
 
     return host, https, id
 
+class CookieError(Exception):
+    pass
+
+def get_cookies_from_sqlite(host, cookies_sqlite, browser):
+    result = {}
+
+    connection = sqlite.connect(cookies_sqlite)
+    cursor = connection.cursor()
+    cursor.execute("select name,value,path,expiry from moz_cookies where host = :host", { 'host': host })
+
+    now = time.time()
+    for name,value,path,expiry in cursor.fetchall():
+        # Excessive caution: toss out values that need to be quoted in a cookie header
+        if float(expiry) > now and not re.search(r'[()<>@,;:\\"/\[\]?={} \t]', value):
+            result[name] = value
+    connection.close()
+
+    if not ('Bugzilla_login' in result and 'Bugzilla_logincookie' in result):
+        raise CookieError("You don't appear to be signed into %s; please log in with %s")
+
+    return result
+
 def get_bugzilla_cookies_ff3(host):
     profiles_dir = os.path.expanduser('~/.mozilla/firefox')
     profile_path = None
@@ -490,67 +511,44 @@ def get_bugzilla_cookies_ff3(host):
             profile_path = os.path.join(profiles_dir, cp.get(section, "Path").strip())
 
     if not profile_path:
-        die("Cannot find default Firefox profile")
+        raise CookieError("Cannot find default Firefox profile")
 
     cookies_sqlite = os.path.join(profile_path, "cookies.sqlite")
     if not os.path.exists(cookies_sqlite):
-        die("%s doesn't exist. Perhaps try git config bz.browser."
-            % cookies_sqlite)
+        raise CookieError("%s doesn't exist." % cookies_sqlite)
 
-    result = {}
-
-    connection = sqlite.connect(cookies_sqlite)
-    cursor = connection.cursor()
-    cursor.execute("select name,value,path,expiry from moz_cookies where host = :host", { 'host': host })
-
-    now = time.time()
-    for name,value,path,expiry in cursor.fetchall():
-        # Excessive caution: toss out values that need to be quoted in a cookie header
-        if float(expiry) > now and not re.search(r'[()<>@,;:\\"/\[\]?={} \t]', value):
-            result[name] = value
-    connection.close()
-
-    if not ('Bugzilla_login' in result and 'Bugzilla_logincookie' in result):
-        die("You don't appear to be signed into %s; "
-            "please log in with Firefox or do 'git config bz.browser'"
-             % host)
-
-    return result
+    return get_cookies_from_sqlite(host, cookies_sqlite, "Firefox")
 
 def get_bugzilla_cookies_epy(host):
     ff_dir = os.path.expanduser('~/.gnome2/epiphany/mozilla/epiphany')
     cookies_sqlite = os.path.join(ff_dir, "cookies.sqlite")
     if not os.path.exists(cookies_sqlite):
-        die("%s doesn't exist. Perhaps try git config bz.browser."
-            % cookies_sqlite)
+        raise CookieError("%s doesn't exist" % cookies_sqlite)
 
-    result = {}
+    return get_cookies_from_sqlite(host, cookies_sqlite, "Epiphany")
 
-    connection = sqlite.connect(cookies_sqlite)
-    cursor = connection.cursor()
-    cursor.execute("select name,value,path,expiry from moz_cookies where host = :host", { 'host': host })
+browsers = { 'firefox3': get_bugzilla_cookies_ff3,
+             'epiphany': get_bugzilla_cookies_epy }
 
-    now = time.time()
-    for name,value,path,expiry in cursor.fetchall():
-        # Excessive caution: toss out values that need to be quoted in a cookie header
-        if float(expiry) > now and not re.search(r'[()<>@,;:\\"/\[\]?={} \t]', value):
-            result[name] = value
-    connection.close()
-
-    if not ('Bugzilla_login' in result and 'Bugzilla_logincookie' in result):
-        die("You don't appear to be signed into %s; please log in with Epiphany" % host)
-
-    return result
+def browser_list():
+    return ", ".join(sorted(browsers.keys()))
 
 def get_bugzilla_cookies(host):
-    d = {'firefox3': get_bugzilla_cookies_ff3,
-         'epiphany': get_bugzilla_cookies_epy}
     browser = get_browser()
-    if browser in d:
-        do_get_cookies = d[browser]
+    if browser in browsers:
+        do_get_cookies = browsers[browser]
     else:
-        die('Unsupported browser %s (we only support %s)' % (browser, d.keys()))
-    return do_get_cookies(host)
+        die('Unsupported browser %s (we only support %s)' % (browser, browser_list()))
+
+    try:
+        return do_get_cookies(host)
+    except CookieError, e:
+        die("""Error getting login cookie from browser:
+   %s
+
+Configured browser: %s (change with 'git config --global bz.browser <value>')
+Possible browsers: %s""" %
+            (str(e), browser, browser_list()))
 
 # Based on http://code.activestate.com/recipes/146306/ - Wade Leftwich
 def encode_multipart_formdata(fields, files):
