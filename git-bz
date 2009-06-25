@@ -328,7 +328,10 @@ def get_commits(commit_or_revision_range):
     return commits
 
 def get_patch(commit):
-    return git.format_patch(commit.id + "^.." + commit.id, stdout=True)
+    # We could pass through -M as an option, but I think you basically always
+    # want it; showing renames as renames rather than removes/adds greatly
+    # improves readability.
+    return git.format_patch(commit.id + "^.." + commit.id, stdout=True, M=True)
 
 def get_body(commit):
     return git.log(commit.id + "^.." + commit.id, pretty="format:%b")
