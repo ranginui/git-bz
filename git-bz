@@ -492,7 +492,7 @@ def resolve_bug_reference(bug_reference):
 class CookieError(Exception):
     pass
 
-def do_get_cookies_from_sqlite(host, cookies_sqlite, browser):
+def do_get_cookies_from_sqlite(host, cookies_sqlite, browser, query):
     result = {}
     # We use a timeout of 0 since we expect to hit the browser holding
     # the lock often and we need to fall back to making a copy without a delay
@@ -500,7 +500,7 @@ def do_get_cookies_from_sqlite(host, cookies_sqlite, browser):
 
     try:
         cursor = connection.cursor()
-        cursor.execute("select name,value,path,expiry from moz_cookies where host = :host", { 'host': host })
+        cursor.execute(query, { 'host': host })
 
         now = time.time()
         for name,value,path,expiry in cursor.fetchall():
@@ -515,23 +515,23 @@ def do_get_cookies_from_sqlite(host, cookies_sqlite, browser):
 # Firefox 3.5 keeps the cookies database permamently locked; as a workaround
 # hack, we make a copy, read from that, then delete the copy. Of course,
 # we may hit an inconsistent state of the database
-def get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser):
+def get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser, *args, **kwargs):
     db_copy = cookies_sqlite + ".git-bz-temp"
     shutil.copyfile(cookies_sqlite, db_copy)
     try:
-        return do_get_cookies_from_sqlite(host, db_copy, browser)
+        return do_get_cookies_from_sqlite(host, db_copy, browser, *args, **kwargs)
     except sqlite.OperationalError, e:
         raise CookieError("Cookie database was locked; temporary copy didn't work")
     finally:
         os.remove(db_copy)
 
-def get_cookies_from_sqlite(host, cookies_sqlite, browser):
+def get_cookies_from_sqlite(*args, **kwargs):
     try:
-        result = do_get_cookies_from_sqlite(host, cookies_sqlite, browser)
+        result = do_get_cookies_from_sqlite(*args, **kwargs)
     except sqlite.OperationalError, e:
         if "database is locked" in str(e):
             # Try making a temporary copy
-            result = get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser)
+            result = get_cookies_from_sqlite_with_copy(*args, **kwargs)
         else:
             raise
 
@@ -539,6 +539,10 @@ def get_cookies_from_sqlite(host, cookies_sqlite, browser):
         raise CookieError("You don't appear to be signed into %s; please log in with %s")
 
     return result
+
+def get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, name):
+    return get_cookies_from_sqlite(host, cookies_sqlite, name,
+                                   "select name,value,path,expiry from moz_cookies where host = :host")
 
 def get_bugzilla_cookies_ff3(host):
     profiles_dir = os.path.expanduser('~/.mozilla/firefox')
@@ -561,7 +565,7 @@ def get_bugzilla_cookies_ff3(host):
     if not os.path.exists(cookies_sqlite):
         raise CookieError("%s doesn't exist." % cookies_sqlite)
 
-    return get_cookies_from_sqlite(host, cookies_sqlite, "Firefox")
+    return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Firefox", "moz_cookies")
 
 def get_bugzilla_cookies_epy(host):
     ff_dir = os.path.expanduser('~/.gnome2/epiphany/mozilla/epiphany')
@@ -569,10 +573,19 @@ def get_bugzilla_cookies_epy(host):
     if not os.path.exists(cookies_sqlite):
         raise CookieError("%s doesn't exist" % cookies_sqlite)
 
-    return get_cookies_from_sqlite(host, cookies_sqlite, "Epiphany")
+    return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Epiphany", "moz_cookies")
+
+def get_bugzilla_cookies_chromium(host):
+    config_dir = os.path.expanduser('~/.config/chromium/Default')
+    cookies_sqlite = os.path.join(config_dir, "Cookies")
+    if not os.path.exists(cookies_sqlite):
+        raise CookieError("%s doesn't exist" % cookies_sqlite)
+    return get_cookies_from_sqlite(host, cookies_sqlite, "Chromium",
+                                   "select name,value,path,expires_utc from cookies where host_key = :host")
 
 browsers = { 'firefox3': get_bugzilla_cookies_ff3,
-             'epiphany': get_bugzilla_cookies_epy }
+             'epiphany': get_bugzilla_cookies_epy,
+             'chromium': get_bugzilla_cookies_chromium }
 
 def browser_list():
     return ", ".join(sorted(browsers.keys()))
