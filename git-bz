@@ -798,6 +798,7 @@ class Bug(object):
         fields['bugid'] = str(self.id)
         fields['action'] = 'insert'
         fields['ispatch'] = '1'
+        fields['attachments.status'] = 'none'
         fields['description'] = description
         if comment:
             fields['comment'] = comment
@@ -817,9 +818,11 @@ class Bug(object):
         if response.status != 200:
             die ("Failed to attach patch to bug: status=%d" % response.status)
 
-        # We hope that this is constant across bugzilla versions for a
-        # successful attachment
+        # Older bugzilla's used this for successful attachments
         m = re.search(r"<title>\s*Changes\s+Submitted", response_data)
+        if not m:
+            # Newer bugzilla's, use, instead:
+            m = re.search(r"<title>\s*Attachment\s+\d+\s+added", response_data)
         if not m:
             print response_data
             die ("Failed to attach patch to bug")
