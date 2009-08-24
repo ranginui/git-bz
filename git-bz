@@ -565,7 +565,7 @@ def get_bugzilla_cookies_ff3(host):
     if not os.path.exists(cookies_sqlite):
         raise CookieError("%s doesn't exist." % cookies_sqlite)
 
-    return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Firefox", "moz_cookies")
+    return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Firefox")
 
 def get_bugzilla_cookies_epy(host):
     ff_dir = os.path.expanduser('~/.gnome2/epiphany/mozilla/epiphany')
@@ -573,7 +573,7 @@ def get_bugzilla_cookies_epy(host):
     if not os.path.exists(cookies_sqlite):
         raise CookieError("%s doesn't exist" % cookies_sqlite)
 
-    return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Epiphany", "moz_cookies")
+    return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Epiphany")
 
 def get_bugzilla_cookies_chromium(host):
     config_dir = os.path.expanduser('~/.config/chromium/Default')
