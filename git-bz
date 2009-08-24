@@ -199,6 +199,7 @@ default-priority = ---
 
 ################################################################################
 
+import base64
 from ConfigParser import RawConfigParser
 from httplib import HTTPConnection, HTTPSConnection
 from optparse import OptionParser
@@ -702,10 +703,11 @@ def die(message):
 # ========================
 
 class BugPatch(object):
-    def __init__(self, attach_id, description, date):
+    def __init__(self, attach_id, description, date, data):
         self.attach_id = attach_id
         self.description = description
         self.date = date
+        self.data = data
 
 class Bug(object):
     def __init__(self, host, https):
@@ -736,8 +738,10 @@ class Bug(object):
         content_type, body = encode_multipart_formdata(fields, files)
         self._send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
 
-    def _load(self, id):
+    def _load(self, id, attachmentdata=False):
         url = "/show_bug.cgi?id=" + id + "&ctype=xml"
+        if not attachmentdata:
+            url += "&excludefield=attachmentdata"
 
         self._send_request("GET", url)
 
@@ -762,7 +766,14 @@ class Bug(object):
                 attach_id = int(attachment.find("attachid").text)
                 description = attachment.find("desc").text
                 date = attachment.find("date").text
-                self.patches.append(BugPatch(attach_id, description, date))
+
+                if attachmentdata:
+                    data = attachment.find("data").text
+                    data = base64.b64decode(data)
+                else:
+                    data = None
+
+                self.patches.append(BugPatch(attach_id, description, date, data))
 
     def _create(self, product, component, short_desc, comment, default_fields):
         fields = dict(default_fields)
@@ -829,24 +840,15 @@ class Bug(object):
 
         print "Attached %s" % filename
 
-    def download_patch(self, patch):
-        self._send_request("GET", "/attachment.cgi?id=" + str(patch.attach_id))
-
-        response = self.connection.getresponse()
-        if response.status != 200:
-            die ("Failed to download attachment %s: %d" % (patch.attach_id, response.status))
-
-        return response.read()
-
     def get_url(self):
         return "%s://%s/show_bug.cgi?id=%d" % ("https" if self.https else "http", self.host, self.id)
 
     @staticmethod
-    def load(bug_reference):
+    def load(bug_reference, attachmentdata=False):
         (host, https, id) = resolve_bug_reference(bug_reference)
 
         bug = Bug(host, https)
-        bug._load(id)
+        bug._load(id, attachmentdata)
 
         return bug
 
@@ -974,7 +976,7 @@ def do_add_url(bug_reference, commit_or_revision_range):
     add_url(bug, commits)
 
 def do_apply(bug_reference):
-    bug = Bug.load(bug_reference)
+    bug = Bug.load(bug_reference, attachmentdata=True)
 
     print "Bug %d - %s" % (bug.id, bug.short_desc)
     print
@@ -986,10 +988,9 @@ def do_apply(bug_reference):
 
         print
 
-        patch_contents = bug.download_patch(patch)
         handle, filename = tempfile.mkstemp(".patch", make_filename(patch.description) + "-")
         f = os.fdopen(handle, "w")
-        f.write(patch_contents)
+        f.write(patch.data)
         f.close()
 
         try:
