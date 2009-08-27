@@ -481,6 +481,9 @@ def resolve_bug_reference(bug_reference):
         tracker = get_tracker()
         id = bug_reference
 
+    if not id.isdigit():
+        die("Invalid bug reference '%s'" % bug_reference)
+
     host = resolve_host_alias(tracker)
     https = tracker_uses_https(tracker)
 
