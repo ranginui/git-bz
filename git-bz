@@ -201,7 +201,7 @@ default-priority = ---
 
 import base64
 from ConfigParser import RawConfigParser
-from httplib import HTTPConnection, HTTPSConnection
+import httplib
 from optparse import OptionParser
 import os
 from pysqlite2 import dbapi2 as sqlite
@@ -726,44 +726,55 @@ class BugPatch(object):
         self.date = date
         self.data = data
 
-class Bug(object):
+class BugServer(object):
     def __init__(self, host, https):
         self.host = host
         self.https = https
+
+        self.cookies = get_bugzilla_cookies(host)
+
+        self._connection = None
+
+    def get_connection(self):
+        if not self._connection:
+            if self.https:
+                self._connection = httplib.HTTPSConnection(self.host, 443)
+            else:
+                self._connection = httplib.HTTPConnection(self.host, 80)
+
+        return self._connection
+
+    def get_cookie_string(self):
+        return ("Bugzilla_login=%s; Bugzilla_logincookie=%s" %
+                (self.cookies['Bugzilla_login'], self.cookies['Bugzilla_logincookie']))
+
+    def send_request(self, method, url, data=None, headers={}):
+        headers = dict(headers)
+        headers['Cookie'] = self.get_cookie_string()
+        headers['User-Agent'] = "git-bz"
+
+        self.get_connection().request(method, url, data, headers)
+        return self.get_connection().getresponse()
+
+    def send_post(self, url, fields, files):
+        content_type, body = encode_multipart_formdata(fields, files)
+        return self.send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
+
+class Bug(object):
+    def __init__(self, server):
+        self.server = server
         self.id = None
         self.product = None
         self.component = None
         self.short_desc = None
         self.patches = []
 
-        self.cookies = get_bugzilla_cookies(host)
-        if self.https:
-            self.connection = HTTPSConnection(self.host, 443)
-        else:
-            self.connection = HTTPConnection(self.host, 80)
-
-    def _send_request(self, method, url, data=None, headers={}):
-        headers = dict(headers)
-        cookie_string = ("Bugzilla_login=%s; Bugzilla_logincookie=%s" %
-                         (self.cookies['Bugzilla_login'], self.cookies['Bugzilla_logincookie']))
-        headers['Cookie'] = cookie_string
-        headers['User-Agent'] = "git-bz"
-
-        self.connection.request(method, url, data, headers)
-
-    def _send_post(self, url, fields, files):
-        content_type, body = encode_multipart_formdata(fields, files)
-        self._send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
-
     def _load(self, id, attachmentdata=False):
         url = "/show_bug.cgi?id=" + id + "&ctype=xml"
         if not attachmentdata:
             url += "&excludefield=attachmentdata"
 
-        self._send_request("GET", url)
-
-        response = self.connection.getresponse()
-
+        response = self.server.send_request("GET", url)
         if response.status != 200:
             die ("Failed to retrieve bug information: %d" % response.status)
 
@@ -801,9 +812,7 @@ class Bug(object):
 
         files = {}
 
-        self._send_post("/post_bug.cgi", fields, files)
-
-        response = self.connection.getresponse()
+        response = self.server.send_post("/post_bug.cgi", fields, files)
         response_data = response.read()
 
         if response.status != 200:
@@ -838,9 +847,7 @@ class Bug(object):
         files = {}
         files['data'] = (filename, 'text/plain', data)
 
-        self._send_post("/attachment.cgi", fields, files)
-
-        response = self.connection.getresponse()
+        response = self.server.send_post("/attachment.cgi", fields, files)
         response_data = response.read()
 
         if response.status != 200:
@@ -858,13 +865,15 @@ class Bug(object):
         print "Attached %s" % filename
 
     def get_url(self):
-        return "%s://%s/show_bug.cgi?id=%d" % ("https" if self.https else "http", self.host, self.id)
+        return "%s://%s/show_bug.cgi?id=%d" % ("https" if self.server.https else "http",
+                                               self.server.host,
+                                               self.id)
 
     @staticmethod
     def load(bug_reference, attachmentdata=False):
         (host, https, id) = resolve_bug_reference(bug_reference)
 
-        bug = Bug(host, https)
+        bug = Bug(BugServer(host, https))
         bug._load(id, attachmentdata)
 
         return bug
@@ -875,7 +884,7 @@ class Bug(object):
         https = tracker_uses_https(tracker)
         default_fields = get_default_fields(tracker)
 
-        bug = Bug(host, https)
+        bug = Bug(BugServer(host, https))
         bug._create(product, component, short_desc, comment, default_fields)
 
         return bug
