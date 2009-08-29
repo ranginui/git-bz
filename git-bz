@@ -528,18 +528,19 @@ def get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser, *args, **kw
     finally:
         os.remove(db_copy)
 
-def get_cookies_from_sqlite(*args, **kwargs):
+def get_cookies_from_sqlite(host, cookies_sqlite, browser, query):
     try:
-        result = do_get_cookies_from_sqlite(*args, **kwargs)
+        result = do_get_cookies_from_sqlite(host, cookies_sqlite, browser, query)
     except sqlite.OperationalError, e:
         if "database is locked" in str(e):
             # Try making a temporary copy
-            result = get_cookies_from_sqlite_with_copy(*args, **kwargs)
+            result = get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser, query)
         else:
             raise
 
     if not ('Bugzilla_login' in result and 'Bugzilla_logincookie' in result):
-        raise CookieError("You don't appear to be signed into %s; please log in with %s")
+        raise CookieError("You don't appear to be signed into %s; please log in with %s" % (host,
+                                                                                            browser))
 
     return result
 
