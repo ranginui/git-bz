@@ -154,11 +154,11 @@
 #
 # 1) git configuration variables specified for the alias.
 #
-#    git config --global bz-tracker.gnome.default-bug-severity trivial
+#    git config --global bz-tracker.gnome.default-severity trivial
 #
 # 2) git configuration variables specified for the host
 #
-#    git config --global bz-tracker.bugzilla.gnome.org.default-bug-severity trivial
+#    git config --global bz-tracker.bugzilla.gnome.org.default-severity trivial
 #
 # 3) Host specific configuration in this file, see the CONFIG variable below
 #
@@ -170,11 +170,8 @@
 DEFAULT_CONFIG = \
 """
 default-assigned-to =
-default-bug-file-loc =
-default-bug-severity = normal
 default-op-sys = All
-default-priority = P5
-default-rep-platform = All
+default-platform = All
 default-version = unspecified
 """
 
@@ -213,6 +210,7 @@ import sys
 import tempfile
 import time
 import traceback
+import xmlrpclib
 import urllib
 from xml.etree.cElementTree import ElementTree
 
@@ -726,6 +724,9 @@ class BugPatch(object):
         self.date = date
         self.data = data
 
+class NoXmlRpcError(Exception):
+    pass
+
 class BugServer(object):
     def __init__(self, host, https):
         self.host = host
@@ -734,9 +735,10 @@ class BugServer(object):
         self.cookies = get_bugzilla_cookies(host)
 
         self._connection = None
+        self._xmlrpc_proxy = None
 
     def get_connection(self):
-        if not self._connection:
+        if self._connection is None:
             if self.https:
                 self._connection = httplib.HTTPSConnection(self.host, 443)
             else:
@@ -759,6 +761,32 @@ class BugServer(object):
     def send_post(self, url, fields, files):
         content_type, body = encode_multipart_formdata(fields, files)
         return self.send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
+
+    def get_xmlrpc_proxy(self):
+        if self._xmlrpc_proxy is None:
+            uri = "%s://%s/xmlrpc.cgi" % ("https" if self.https else "http",
+                                          self.host)
+            transport = BugTransport(self)
+            self._xmlrpc_proxy = xmlrpclib.ServerProxy(uri, transport)
+
+        return self._xmlrpc_proxy
+
+class BugTransport(xmlrpclib.Transport):
+    def __init__(self, server):
+        xmlrpclib.Transport.__init__(self)
+        self.server = server
+
+    # Overriding this allows us not to separately subclass Transport and SafeTransport
+    def make_connection(self, host):
+        if self.server.https:
+            return httplib.HTTPS(self.server.host)
+        else:
+            return httplib.HTTP(self.server.host)
+
+    # This is the main point of the subclassing - to add cookies
+    def send_request(self, connection, *args):
+        xmlrpclib.Transport.send_request(self, connection, *args)
+        connection.putheader("Cookie", self.server.get_cookie_string())
 
 class Bug(object):
     def __init__(self, server):
@@ -803,12 +831,55 @@ class Bug(object):
 
                 self.patches.append(BugPatch(attach_id, description, date, data))
 
-    def _create(self, product, component, short_desc, comment, default_fields):
-        fields = dict(default_fields)
+    def _create_via_xmlrpc(self, product, component, short_desc, comment, default_fields):
+        params = dict()
+        params['product'] = product
+        params['component'] = component
+        params['summary'] = short_desc
+        params['description'] = comment
+        for (field, value) in default_fields.iteritems():
+            params[field] = value
+
+        try:
+            response = self.server.get_xmlrpc_proxy().Bug.create(params)
+            self.id = response['id']
+        except xmlrpclib.Fault, e:
+            die(e.faultString)
+        except xmlrpclib.ProtocolError, e:
+            if e.errcode == 404:
+                raise NoXmlRpcError(e.errmsg)
+            else:
+                die("Problem communicating with server: %s (%d)", e.errmsg, e.errcode)
+
+    def _create_with_form(self, product, component, short_desc, comment, default_fields):
+        fields = dict()
         fields['product'] = product
         fields['component'] = component
         fields['short_desc'] = short_desc
         fields['comment'] = comment
+
+        # post_bug.cgi wants some names that are less congenial than the names
+        # expected in XML-RPC.
+        for (field, value) in default_fields.iteritems():
+            if field == 'severity':
+                field = 'bug_severity'
+            elif field == 'platform':
+                field = 'rep_platform'
+            fields[field] = value
+
+        # Priority values vary wildly between different servers because the stock
+        # Bugzilla uses the awkward P1/../P5. It will be defaulted on the XML-RPC
+        # code path, but we need to take a wild guess here.
+        if not 'priority' in fields:
+            fields['priority'] = 'P5'
+        # Legal severity values are much more standardized, but not specifying it
+        # in the XML-RPC code path allows the server default to win. We need to
+        # specify something here.
+        if not 'severity' in fields:
+            fields['bug_severity'] = 'normal'
+        # Required, but a configured default doesn't make any sense
+        if not 'bug_file_loc' in fields:
+            fields['bug_file_loc'] = ''
 
         files = {}
 
@@ -825,6 +896,12 @@ class Bug(object):
             die("Filing bug failed")
 
         self.id = int(m.group(1))
+
+    def _create(self, product, component, short_desc, comment, default_fields):
+        try:
+            self._create_via_xmlrpc(product, component, short_desc, comment, default_fields)
+        except NoXmlRpcError:
+            self._create_with_form(product, component, short_desc, comment, default_fields)
 
         print "Successfully created"
         print "Bug %d - %s" % (self.id, short_desc)

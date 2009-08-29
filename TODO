@@ -24,23 +24,15 @@ Automatically guess obvious obsoletes
  matches the Subject of the attachment, start the Obsoletes line
  uncommented?
 
-Use XML-RPC when available.
-
-  Maybe use python-bugzilla: http://fedorahosted.org/python-bugzilla/
-
-  Not sure there are a lot of advantages to this; one thing that it
-  might be possible to do with this is allow the user to specify only
-  the product and get an interactive list of components. Also, better
-  error handling.
-
 Handle redirects:
 
   Should follow redirects, both to different URLs and http => https
 
 Better display of errors
 
-  Currently specifying a non-existent product/component just dumps
-  out raw HTML for the reply. Etc.
+  The switch to XML-RPC greatly improves errors when filing a new bug,
+  but other problems (e.g., having stale login cookies when making an
+  attachment) still just dump HTML pages error pages to the console.
 
 More general patch application
 
