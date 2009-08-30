@@ -986,6 +986,21 @@ class Bug(object):
 
         print "Attached %s" % filename
 
+    # Query the server for the legal values of the given field; returns an
+    # array, or None if the query failed
+    def legal_values(self, field):
+        try:
+            response = self.server.get_xmlrpc_proxy().Bug.legal_values({ 'field': field })
+            return response['values']
+        except xmlrpclib.Fault, e:
+            if e.faultCode == -32000: # https://bugzilla.mozilla.org/show_bug.cgi?id=513511
+                return None
+            raise
+        except xmlrpclib.ProtocolError, e: # old bugzilla, no XML-RPC
+            if e.errcode == 404:
+                return None
+            raise
+
     # Update specified fields of a bug; keyword arguments are interpreted
     # as field_name=value
     def update(self, **changes):
