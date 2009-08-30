@@ -473,29 +473,51 @@ def get_default_fields(tracker):
 # Utility functions for bugzilla
 # ==============================
 
-def resolve_bug_reference(bug_reference):
-    m = re.match("http(s?)://([^/]+)/show_bug.cgi\?id=([^&]+)", bug_reference)
-    if m:
-        return m.group(2), m.group(1) != "", m.group(3)
+class BugParseError(Exception):
+    pass
 
-    colon = bug_reference.find(":")
-    if colon > 0:
-        tracker = bug_reference[0:colon]
-        id = bug_reference[colon + 1:]
-    else:
-        tracker = get_tracker()
-        id = bug_reference
+# A BugHandle is the parsed form of a bug reference string; it
+# uniquely identifies a bug on a server, though until we try
+# to load it (and create a Bug) we don't know if it actually exists.
+class BugHandle:
+    def __init__(self, host, https, id):
+        self.host = host
+        self.https = https
+        self.id = id
 
-    if not id.isdigit():
-        die("Invalid bug reference '%s'" % bug_reference)
+    @staticmethod
+    def parse(bug_reference):
+        m = re.match("http(s?)://([^/]+)/show_bug.cgi\?id=([^&]+)", bug_reference)
+        if m:
+            return BugHandle(host=m.group(2),
+                             https=m.group(1) != "",
+                             id=m.group(3))
 
-    host = resolve_host_alias(tracker)
-    https = tracker_uses_https(tracker)
+        colon = bug_reference.find(":")
+        if colon > 0:
+            tracker = bug_reference[0:colon]
+            id = bug_reference[colon + 1:]
+        else:
+            tracker = get_tracker()
+            id = bug_reference
 
-    if not re.match(r"^.*\.[a-zA-Z]{2,}$", host):
-        die("'%s' doesn't look like a valid bugzilla host or alias" % host)
+        if not id.isdigit():
+            raise BugParseError("Invalid bug reference '%s'" % bug_reference)
 
-    return host, https, id
+        host = resolve_host_alias(tracker)
+        https = tracker_uses_https(tracker)
+
+        if not re.match(r"^.*\.[a-zA-Z]{2,}$", host):
+            raise BugParseError("'%s' doesn't look like a valid bugzilla host or alias" % host)
+
+        return BugHandle(host=host, https=https, id=id)
+
+    @staticmethod
+    def parse_or_die(str):
+        try:
+            return BugHandle.parse(str)
+        except BugParseError, e:
+            die(e.message)
 
 class CookieError(Exception):
     pass
@@ -816,6 +838,18 @@ class BugTransport(xmlrpclib.Transport):
         xmlrpclib.Transport.send_request(self, connection, *args)
         connection.putheader("Cookie", self.server.get_cookie_string())
 
+servers = []
+
+def get_bug_server(host, https):
+    for server in servers:
+        if server.host == host and server.https == https:
+            return server
+
+    server = BugServer(host, https)
+    servers.append(server)
+
+    return server
+
 # Unfortunately, Bugzilla doesn't set a useful status code for
 # form posts.  Because it's very confusing to claim we succeeded
 # but not, we look for text in the response indicating success,
@@ -1065,10 +1099,9 @@ class Bug(object):
 
     @staticmethod
     def load(bug_reference, attachmentdata=False):
-        (host, https, id) = resolve_bug_reference(bug_reference)
-
-        bug = Bug(BugServer(host, https))
-        bug._load(id, attachmentdata)
+        server = get_bug_server(bug_reference.host, bug_reference.https)
+        bug = Bug(server)
+        bug._load(bug_reference.id, attachmentdata)
 
         return bug
 
@@ -1078,7 +1111,8 @@ class Bug(object):
         https = tracker_uses_https(tracker)
         default_fields = get_default_fields(tracker)
 
-        bug = Bug(BugServer(host, https))
+        server = get_bug_server(host, https)
+        bug = Bug(server)
         bug._create(product, component, short_desc, comment, default_fields)
 
         return bug
@@ -1176,7 +1210,7 @@ def add_url(bug, commits):
 def do_add_url(bug_reference, commit_or_revision_range):
     commits = get_commits(commit_or_revision_range)
 
-    bug = Bug.load(bug_reference)
+    bug = Bug.load(BugHandle.parse_or_die(bug_reference))
 
     check_add_url(commits, bug.id, is_add_url=True)
 
@@ -1196,7 +1230,8 @@ def do_add_url(bug_reference, commit_or_revision_range):
     add_url(bug, commits)
 
 def do_apply(bug_reference):
-    bug = Bug.load(bug_reference, attachmentdata=True)
+    bug = Bug.load(BugHandle.parse_or_die(bug_reference),
+                   attachmentdata=True)
 
     print "Bug %d - %s" % (bug.id, bug.short_desc)
     print
@@ -1292,7 +1327,7 @@ def attach_commits(bug, commits, include_comments=True, edit_comments=False):
         bug.create_patch(commit.subject, body, filename, patch, obsoletes=obsoletes)
 
 def do_attach(bug_reference, commit_or_revision_range):
-    bug = Bug.load(bug_reference)
+    bug = Bug.load(BugHandle.parse_or_die(bug_reference))
 
     commits = get_commits(commit_or_revision_range)
     if global_options.add_url:
@@ -1319,7 +1354,7 @@ def do_attach(bug_reference, commit_or_revision_range):
     attach_commits(bug, commits, edit_comments=global_options.edit)
 
 def do_edit(bug_reference):
-    bug = Bug.load(bug_reference)
+    bug = Bug.load(BugHandle.parse_or_die(bug_reference))
 
     template = StringIO()
     template.write("# Bug %d - %s - %s" % (bug.id, bug.short_desc, bug.bug_status))
