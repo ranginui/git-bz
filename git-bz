@@ -81,12 +81,15 @@
 #       # to include the bug URL. (See 'git bz add-url')
 #       git bz attach -u bugzilla.gnome.org:1234 b50ea9bd
 #
-#  git bz edit <bug reference>
+#  git bz edit [<bug reference> | <commit> | <revision range>]
 #
 #     Allows doing common operations on a Bugzilla bug without going to
 #     your web browser. An editable buffer is brought up in a git-like
 #     fashion, where you can add comments, resolve a bug, and change
 #     the status of patches.
+#
+#     If the argument identifies a commit or commits rather than a bug
+#     then each bug referred to in the commits is edited in turn.
 #
 #  git bz file [options] [[<product>]/<component>] [<commit> | <revision range>]
 #
@@ -518,6 +521,13 @@ class BugHandle:
             return BugHandle.parse(str)
         except BugParseError, e:
             die(e.message)
+
+    def __hash__(self):
+        return hash((self.host, self.https, self.id))
+
+    def __eq__(self, other):
+        return ((self.host, self.https, self.id) ==
+                (other.host, other.https, other.id))
 
 class CookieError(Exception):
     pass
@@ -1353,9 +1363,7 @@ def do_attach(bug_reference, commit_or_revision_range):
 
     attach_commits(bug, commits, edit_comments=global_options.edit)
 
-def do_edit(bug_reference):
-    bug = Bug.load(BugHandle.parse_or_die(bug_reference))
-
+def edit_bug(bug):
     template = StringIO()
     template.write("# Bug %d - %s - %s" % (bug.id, bug.short_desc, bug.bug_status))
     if bug.bug_status == "RESOLVED":
@@ -1404,7 +1412,8 @@ def do_edit(bug_reference):
     resolution = resolutions[0] if len(resolutions) > 0 else None
 
     if resolution is None and len(changed_attachments) == 0 and comment == "":
-        die("No changes, aborting")
+        print "No changes, not editing Bug %d - %s" % (bug.id, bug.short_desc)
+        return
 
     bug_changes = {}
     if comment != "":
@@ -1457,6 +1466,74 @@ def do_edit(bug_reference):
     else:
         print "Added comment to bug %d - %s" % (bug.id, bug.short_desc)
     print bug.get_url()
+
+LOG_BUG_REFERENCE = re.compile(r"""
+(\b[Ss]ee\s+(?:\S+\s+){0,2})?
+(?:(https?://[^/]+/show_bug.cgi\?id=[^&\s]+)
+     |
+   [Bb]ug\s+\#?(\d+))
+""", re.VERBOSE | re.DOTALL)
+
+def extract_bugs_from_string(str):
+    refs = []
+    for m in LOG_BUG_REFERENCE.finditer(str):
+        bug_reference = None
+
+        # If something says "See http://bugzilla.gnome.org/..." or
+        # "See mozilla bug http://bugzilla.mozilla.org/..." or "see
+        # bug 12345" - anything like that - then it's probably talking
+        # about some peripherally related bug. So, if the word see
+        # occurs 0 to 2 words before the bug reference, we ignore it.
+        if m.group(1) is not None:
+            print "Skipping cross-reference '%s'" % m.group(0)
+            continue
+        if m.group(2) is not None:
+            bug_reference = m.group(2)
+        else:
+            bug_reference = m.group(3)
+
+        try:
+            yield BugHandle.parse(bug_reference)
+        except BugParseError, e:
+            print "WARNING: cannot resolve bug reference '%s'" % bug_reference
+
+def extract_bugs_from_commit(commit):
+    for handle in extract_bugs_from_string(commit.subject):
+        yield handle
+    for handle in extract_bugs_from_string(get_body(commit)):
+        yield handle
+
+# Yields bug, [<list of commits where it is referenced>] for each bug
+# referenced in the list of commits. The order of bugs is the same as the
+# order of their first reference in the list of commits
+def extract_and_collate_bugs(commits):
+    bugs = []
+    bug_to_commits = {}
+
+    for commit in commits:
+        for handle in extract_bugs_from_commit(commit):
+            if not handle in bug_to_commits:
+                bugs.append(handle)
+                bug_to_commits[handle] = []
+            bug_to_commits[handle].append(commit)
+
+    for bug in bugs:
+        yield bug, bug_to_commits[bug]
+
+def do_edit(bug_reference_or_revision_range):
+    try:
+        bug = Bug.load(BugHandle.parse(bug_reference_or_revision_range))
+        edit_bug(bug)
+    except BugParseError, e:
+        try:
+            commits = get_commits(bug_reference_or_revision_range)
+        except CalledProcessError:
+            die("'%s' isn't a valid bug reference or revision range" % bug_reference_or_revision_range)
+        # Process from oldest to newest
+        commits.reverse()
+        for handle, commits in extract_and_collate_bugs(commits):
+            bug = Bug.load(handle)
+            edit_bug(bug)
 
 PRODUCT_COMPONENT_HELP = """
 
