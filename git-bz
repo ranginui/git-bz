@@ -977,6 +977,25 @@ class Bug(object):
 
         print "Attached %s" % filename
 
+    # Update specified fields of a bug; keyword arguments are interpreted
+    # as field_name=value
+    def update(self, **changes):
+        changes['id'] = str(self.id)
+        changes['token'] = self.token
+        # Since we don't send delta_ts we'll never get a mid-air collision
+        # This is probably a good thing
+
+        response = self.server.send_post("/process_bug.cgi", changes)
+        response_data = response.read()
+        if not check_for_success(response, response_data,
+                                 r"<title>\s*Bug[\S\s]*processed\s*</title>"):
+
+            # Mid-air collisions would be indicated by
+            # "<title>Mid-air collision!</title>"
+
+            print response_data
+            die ("Failed to update bug %d, status=%d" % (self.id, response.status))
+
     def get_url(self):
         return "%s://%s/show_bug.cgi?id=%d" % ("https" if self.server.https else "http",
                                                self.server.host,
