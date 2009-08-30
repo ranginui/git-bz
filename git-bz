@@ -706,6 +706,29 @@ def split_subject_body(lines):
 
     return subject, "".join(lines[i + 1:]).strip()
 
+def _shortest_unique_abbreviation(full, l):
+    for i in xrange(1, len(full) + 1):
+        abbrev = full[0:i]
+        if not any((x != full and x.startswith(abbrev) for x in l)):
+            return abbrev
+    # Duplicate items or one item is a prefix of another
+    raise ValueError("%s has no unique abbreviation in %s" % (full, l))
+
+def _abbreviation_item_help(full, l):
+    abbrev = _shortest_unique_abbreviation(full, l)
+    return '[%s]%s' % (abbrev, full[len(abbrev):])
+
+# Return '[a]pple, [pe]ar, [po]tato'
+def abbreviation_help_string(l):
+    return ", ".join((_abbreviation_item_help(full, l) for full in l))
+
+# Find the unique element in l that starts with abbrev
+def expand_abbreviation(abbrev, l):
+    for full in l:
+        if full.startswith(abbrev) and len(abbrev) >= len(_shortest_unique_abbreviation(full, l)):
+            return full
+    raise ValueError("No unique abbreviation expansion")
+
 def prompt(message):
     print message, "[yn] ",
     line = sys.stdin.readline().strip()
