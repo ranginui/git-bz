@@ -789,6 +789,30 @@ class BugTransport(xmlrpclib.Transport):
         xmlrpclib.Transport.send_request(self, connection, *args)
         connection.putheader("Cookie", self.server.get_cookie_string())
 
+# Unfortunately, Bugzilla doesn't set a useful status code for
+# form posts.  Because it's very confusing to claim we succeeded
+# but not, we look for text in the response indicating success,
+# and not text indicating failure.
+#
+# We generally look for specific <title> tags - these have been
+# quite stable across versions, though translations will throw
+# us off.
+#
+# *args are regular expressions to search for in response_data
+# that indicate success. Returns the matched regular expression
+# on success, None otherwise
+def check_for_success(response, response_data, *args):
+
+    if response.status != 200:
+        return False
+
+    for pattern in args:
+        m = re.search(pattern, response_data)
+        if m:
+            return m
+
+    return None
+
 class Bug(object):
     def __init__(self, server):
         self.server = server
@@ -884,15 +908,11 @@ class Bug(object):
 
         response = self.server.send_post("/post_bug.cgi", fields)
         response_data = response.read()
-
-        if response.status != 200:
-            print response_data
-            die("Failed to create bug: %d" % response.status)
-
-        m = re.search(r"<title>\s*Bug\s+([0-9]+)", response_data)
+        m = check_for_success(response, response_data,
+                              r"<title>\s*Bug\s+([0-9]+)")
         if not m:
             print response_data
-            die("Filing bug failed")
+            die("Failed to create bug, status=%d" % response.status)
 
         self.id = int(m.group(1))
 
@@ -924,18 +944,13 @@ class Bug(object):
 
         response = self.server.send_post("/attachment.cgi", fields, files)
         response_data = response.read()
-
-        if response.status != 200:
-            die ("Failed to attach patch to bug: status=%d" % response.status)
-
-        # Older bugzilla's used this for successful attachments
-        m = re.search(r"<title>\s*Changes\s+Submitted", response_data)
-        if not m:
-            # Newer bugzilla's, use, instead:
-            m = re.search(r"<title>\s*Attachment\s+\d+\s+added", response_data)
-        if not m:
+        if not check_for_success(response, response_data,
+                                 # Older bugzilla's used this for successful attachments
+                                 r"<title>\s*Changes\s+Submitted",
+                                 # Newer bugzilla's, use, instead:
+                                 r"<title>\s*Attachment\s+\d+\s+added"):
             print response_data
-            die ("Failed to attach patch to bug")
+            die ("Failed to attach patch to bug %d, status=%d" % (self.id, response.status))
 
         print "Attached %s" % filename
 
