@@ -742,11 +742,8 @@ def die(message):
 # ========================
 
 class BugPatch(object):
-    def __init__(self, attach_id, description, date, data):
+    def __init__(self, attach_id):
         self.attach_id = attach_id
-        self.description = description
-        self.date = date
-        self.data = data
 
 class NoXmlRpcError(Exception):
     pass
@@ -864,20 +861,32 @@ class Bug(object):
 
         self.id = int(bug.find("bug_id").text)
         self.short_desc = bug.find("short_desc").text
+        self.bug_status = bug.find("bug_status").text
+        if self.bug_status == "RESOLVED":
+            self.resolution = bug.find("resolution").text
+        self.token = bug.find("token").text
 
         for attachment in bug.findall("attachment"):
             if attachment.get("ispatch") == "1" and not attachment.get("isobsolete") == "1" :
                 attach_id = int(attachment.find("attachid").text)
-                description = attachment.find("desc").text
-                date = attachment.find("date").text
+                patch = BugPatch(attach_id)
+                # We have to save fields we might not otherwise care about
+                # (like isprivate) so that we can pass them back when updating
+                # the attachment
+                patch.description = attachment.find("desc").text
+                patch.date = attachment.find("date").text
+                patch.status = attachment.find("status").text
+                patch.filename = attachment.find("filename").text
+                patch.isprivate = attachment.get("isprivate") == "1"
+                patch.token = attachment.find("token").text
 
                 if attachmentdata:
                     data = attachment.find("data").text
-                    data = base64.b64decode(data)
+                    patch.data = base64.b64decode(data)
                 else:
-                    data = None
+                    patch.data = None
 
-                self.patches.append(BugPatch(attach_id, description, date, data))
+                self.patches.append(patch)
 
     def _create_via_xmlrpc(self, product, component, short_desc, comment, default_fields):
         params = dict()
@@ -995,6 +1004,37 @@ class Bug(object):
 
             print response_data
             die ("Failed to update bug %d, status=%d" % (self.id, response.status))
+
+    # Update specified fields of an attachment; keyword arguments are
+    # interpreted as field_name=value
+    def update_patch(self, patch, **changes):
+        # Unlike /process_bug.cgi, the attachment editing interface doesn't
+        # support defaulting missing fields to their existing values, so we
+        # have to pass everything back.
+        fields = {
+            'action': 'update',
+            'id': str(patch.attach_id),
+            'token': patch.token,
+            'description': patch.description,
+            'filename': patch.filename,
+            'ispatch': "1",
+            'isobsolete': "0",
+            'isprivate': "1" if patch.isprivate else "0",
+            'attachments.status': patch.status,
+        };
+        for (field, value) in changes.iteritems():
+            if field == 'status': # encapsulate oddball form field name
+                field = 'attachments.status'
+            fields[field] = value
+
+        response = self.server.send_post("/attachment.cgi", fields)
+        response_data = response.read()
+        if not check_for_success(response, response_data,
+                                 r"<title>\s*Changes\s+Submitted"):
+            print response_data
+            die ("Failed to update attachment %d to bug %d, status=%d" % (patch.attach_id,
+                                                                          self.id,
+                                                                          response.status))
 
     def get_url(self):
         return "%s://%s/show_bug.cgi?id=%d" % ("https" if self.server.https else "http",
