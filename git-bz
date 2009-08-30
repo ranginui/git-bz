@@ -81,6 +81,13 @@
 #       # to include the bug URL. (See 'git bz add-url')
 #       git bz attach -u bugzilla.gnome.org:1234 b50ea9bd
 #
+#  git bz edit <bug reference>
+#
+#     Allows doing common operations on a Bugzilla bug without going to
+#     your web browser. An editable buffer is brought up in a git-like
+#     fashion, where you can add comments, resolve a bug, and change
+#     the status of patches.
+#
 #  git bz file [options] [[<product>]/<component>] [<commit> | <revision range>]
 #
 #     Like 'attach', but files a new bug. Opens an editor for the user to
@@ -1311,6 +1318,111 @@ def do_attach(bug_reference, commit_or_revision_range):
 
     attach_commits(bug, commits, edit_comments=global_options.edit)
 
+def do_edit(bug_reference):
+    bug = Bug.load(bug_reference)
+
+    template = StringIO()
+    template.write("# Bug %d - %s - %s" % (bug.id, bug.short_desc, bug.bug_status))
+    if bug.bug_status == "RESOLVED":
+        template.write(" - %s" % bug.resolution)
+    template.write("\n")
+    template.write("# %s\n" % bug.get_url())
+    template.write("# Enter comment on following lines; delete everything to abort\n\n")
+    template.write("# Uncomment to resolve bug\n")
+    legal_resolutions = bug.legal_values('resolution')
+    if legal_resolutions:
+        # Require non-empty resolution. DUPLICATE, MOVED would need special support
+        legal_resolutions = [x for x in legal_resolutions if x not in ('', 'DUPLICATE', 'MOVED')]
+        template.write("# possible resolutions: %s\n" % abbreviation_help_string(legal_resolutions))
+    template.write("#Resolution: FIXED\n")
+    if len(bug.patches) > 0:
+        template.write("\n# To change patch status, uncomment below, edit 'committed' as appropriate.\n")
+        legal_statuses = bug.legal_values('attachments.status')
+        if legal_statuses:
+            legal_statuses.append('obsolete')
+            template.write("# possible statuses: %s\n" % abbreviation_help_string(legal_statuses))
+
+        for patch in bug.patches:
+            template.write("#committed @%d - %s - %s\n" % (patch.attach_id, patch.description, patch.status))
+        template.write("\n")
+
+    lines = edit_template(template.getvalue())
+
+    def filter_line(line):
+        m = re.match("^\s*Resolution\s*:\s*(\S+)", line)
+        if m:
+            resolutions.append(m.group(1))
+            return False
+        m = re.match("^\s*(\S+)\s*@\s*(\d+)", line)
+        if m:
+            status = m.group(1)
+            changed_attachments[int(m.group(2))] = status
+            return False
+        return True
+
+    changed_attachments = {}
+    resolutions = []
+
+    lines = filter(filter_line, lines)
+
+    comment = "".join(lines).strip()
+    resolution = resolutions[0] if len(resolutions) > 0 else None
+
+    if resolution is None and len(changed_attachments) == 0 and comment == "":
+        die("No changes, aborting")
+
+    bug_changes = {}
+    if comment != "":
+        bug_changes['comment'] = comment
+    if resolution is not None:
+        if legal_resolutions:
+            try:
+                resolution = expand_abbreviation(resolution, legal_resolutions)
+            except ValueError:
+                die("Bad resolution: %s" % resolution)
+        bug_changes['bug_status'] = 'RESOLVED'
+        bug_changes['resolution'] = resolution
+
+    for (attachment_id, status) in changed_attachments.iteritems():
+        patch = None
+        if legal_statuses:
+            try:
+                status = expand_abbreviation(status, legal_statuses)
+            except ValueError:
+                die("Bad patch status: %s" % status)
+        for p in bug.patches:
+            if p.attach_id == attachment_id:
+                patch = p
+        if not patch:
+            die("%d is not a valid attachment ID for Bug %d" % (attachment_id, bug.id))
+        attachment_changes = {}
+        # Try to figure out when the comment is a comment on an attachment;
+        # Bugzilla will add a helpful notation if we submit the comment this way
+        # and we'll only send out one set of email
+        if comment != "" and len(changed_attachments) == 1 and resolution is None:
+            attachment_changes['comment'] = comment
+            del bug_changes['comment']
+        if status == 'obsolete':
+            attachment_changes['isobsolete'] = 1
+        else:
+            attachment_changes['status'] = status
+        bug.update_patch(patch, **attachment_changes)
+        if status == 'obsolete':
+            print "Marked attachment as obsolete: %s - %s " % (patch.attach_id, patch.description)
+        else:
+            print "Changed status of attachment to %s: %s - %s" % (status, patch.attach_id, patch.description)
+
+    if len(bug_changes) > 0:
+        bug.update(**bug_changes)
+
+    if resolution is not None:
+        print "Resolved as %s bug %d - %s" % (resolution, bug.id, bug.short_desc)
+    elif len(changed_attachments) > 0:
+        print "Updated bug %d - %s" % (bug.id, bug.short_desc)
+    else:
+        print "Added comment to bug %d - %s" % (bug.id, bug.short_desc)
+    print bug.get_url()
+
 PRODUCT_COMPONENT_HELP = """
 
 Use:
@@ -1429,13 +1541,16 @@ elif command == 'attach':
     add_add_url_option()
     add_edit_option()
     min_args = max_args = 2
+elif command == 'edit':
+    parser.set_usage("git bz edit [options] <bug reference>");
+    min_args = max_args = 1
 elif command == 'file':
     parser.set_usage("git bz file [options] <product>/<component> [<since> | <revision range>]");
     add_add_url_option()
     min_args = 1
     max_args = 2
 else:
-    print >>sys.stderr, "Usage: git bz [add-url|apply|attach|file] [options]"
+    print >>sys.stderr, "Usage: git bz [add-url|apply|attach|edit|file] [options]"
     sys.exit(1)
 
 global_options, args = parser.parse_args()
@@ -1450,6 +1565,8 @@ elif command == 'apply':
     do_apply(*args)
 elif command == 'attach':
     do_attach(*args)
+elif command == 'edit':
+    do_edit(*args)
 elif command == 'file':
     do_file(*args)
 
