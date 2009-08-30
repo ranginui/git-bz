@@ -610,7 +610,7 @@ Possible browsers: %s""" %
             (str(e), browser, browser_list()))
 
 # Based on http://code.activestate.com/recipes/146306/ - Wade Leftwich
-def encode_multipart_formdata(fields, files):
+def encode_multipart_formdata(fields, files=None):
     """
     fields is a dictionary of { name : value } for regular form fields. if value is a list,
       one form field is added for each item in the list
@@ -633,13 +633,14 @@ def encode_multipart_formdata(fields, files):
             L.append('Content-Disposition: form-data; name="%s"' % key)
             L.append('')
             L.append(value)
-    for key in sorted(files.keys()):
-        (filename, content_type, value) = files[key]
-        L.append('--' + BOUNDARY)
-        L.append('Content-Disposition: form-data; name="%s"; filename="%s"' % (key, filename))
-        L.append('Content-Type: %s' % content_type)
-        L.append('')
-        L.append(value)
+    if files:
+        for key in sorted(files.keys()):
+            (filename, content_type, value) = files[key]
+            L.append('--' + BOUNDARY)
+            L.append('Content-Disposition: form-data; name="%s"; filename="%s"' % (key, filename))
+            L.append('Content-Type: %s' % content_type)
+            L.append('')
+            L.append(value)
     L.append('--' + BOUNDARY + '--')
     L.append('')
     body = CRLF.join(L)
@@ -758,7 +759,7 @@ class BugServer(object):
         self.get_connection().request(method, url, data, headers)
         return self.get_connection().getresponse()
 
-    def send_post(self, url, fields, files):
+    def send_post(self, url, fields, files=None):
         content_type, body = encode_multipart_formdata(fields, files)
         return self.send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
 
@@ -881,9 +882,7 @@ class Bug(object):
         if not 'bug_file_loc' in fields:
             fields['bug_file_loc'] = ''
 
-        files = {}
-
-        response = self.server.send_post("/post_bug.cgi", fields, files)
+        response = self.server.send_post("/post_bug.cgi", fields)
         response_data = response.read()
 
         if response.status != 200:
@@ -921,8 +920,7 @@ class Bug(object):
             # name 'obsolete' for each item in the list
             fields['obsolete'] = map(str, obsoletes)
 
-        files = {}
-        files['data'] = (filename, 'text/plain', data)
+        files = { 'data': (filename, 'text/plain', data) }
 
         response = self.server.send_post("/attachment.cgi", fields, files)
         response_data = response.read()
