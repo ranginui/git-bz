@@ -242,6 +242,7 @@ global_options = None
 #       _quiet: Discard all output even if an error occurs
 #       _interactive: Don't capture stdout and stderr
 #       _input=<str>: Feed <str> to stdinin of the command
+#       _return_error: Return tuple of captured (stdout,stderr)
 #
 def git_run(command, *args, **kwargs):
     to_run = ['git', command.replace("_", "-")]
@@ -250,11 +251,14 @@ def git_run(command, *args, **kwargs):
     quiet = False
     input = None
     interactive = False
+    return_stderr = False
     for (k,v) in kwargs.iteritems():
         if k == '_quiet':
             quiet = True
         elif k == '_interactive':
             interactive = True
+        elif k == '_return_stderr':
+            return_stderr = True
         elif k == '_input':
             input = v
         elif v is True:
@@ -280,6 +284,8 @@ def git_run(command, *args, **kwargs):
 
     if interactive:
         return None
+    elif return_stderr:
+        return output.strip(), error.strip()
     else:
         return output.strip()
 
