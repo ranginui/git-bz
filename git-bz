@@ -893,6 +893,32 @@ class BugServer(object):
 
         return self._xmlrpc_proxy
 
+    # Query the server for the legal values of the given field; returns an
+    # array, or None if the query failed
+    def _legal_values(self, field):
+        try:
+            response = self.get_xmlrpc_proxy().Bug.legal_values({ 'field': field })
+            cache.set(self.host, 'legal_' + field, response['values'])
+            return response['values']
+        except xmlrpclib.Fault, e:
+            if e.faultCode == -32000: # https://bugzilla.mozilla.org/show_bug.cgi?id=513511
+                return None
+            raise
+        except xmlrpclib.ProtocolError, e:
+            if e.errcode == 500: # older bugzilla versions die this way
+                return None
+            elif e.errcode == 404: # really old bugzilla, no XML-RPC
+                return None
+            raise
+
+    def legal_values(self, field):
+        try:
+            return cache.get(self.host, 'legal_' + field)
+        except IndexError:
+            values = self._legal_values(field)
+            cache.set(self.host, 'legal_' + field, values)
+            return values
+
 class BugTransport(xmlrpclib.Transport):
     def __init__(self, server):
         xmlrpclib.Transport.__init__(self)
@@ -1103,23 +1129,6 @@ class Bug(object):
             die ("Failed to attach patch to bug %d, status=%d" % (self.id, response.status))
 
         print "Attached %s" % filename
-
-    # Query the server for the legal values of the given field; returns an
-    # array, or None if the query failed
-    def legal_values(self, field):
-        try:
-            response = self.server.get_xmlrpc_proxy().Bug.legal_values({ 'field': field })
-            return response['values']
-        except xmlrpclib.Fault, e:
-            if e.faultCode == -32000: # https://bugzilla.mozilla.org/show_bug.cgi?id=513511
-                return None
-            raise
-        except xmlrpclib.ProtocolError, e:
-            if e.errcode == 500: # older bugzilla versions die this way
-                return None
-            elif e.errcode == 404: # really old bugzilla, no XML-RPC
-                return None
-            raise
 
     # Update specified fields of a bug; keyword arguments are interpreted
     # as field_name=value
@@ -1492,7 +1501,7 @@ def edit_bug(bug, applied_commits=None):
         template.write("# Uncommment and edit to change resolution\n")
     else:
         template.write("# Uncomment to resolve bug\n")
-    legal_resolutions = bug.legal_values('resolution')
+    legal_resolutions = bug.server.legal_values('resolution')
     if legal_resolutions:
         # Require non-empty resolution. DUPLICATE, MOVED would need special support
         legal_resolutions = [x for x in legal_resolutions if x not in ('', 'DUPLICATE', 'MOVED')]
@@ -1507,7 +1516,7 @@ def edit_bug(bug, applied_commits=None):
                 template.write("\n# Lines below change patch status, unless commented out\n")
             else:
                 template.write("\n# To change patch status, uncomment below, edit 'committed' as appropriate.\n")
-            legal_statuses = bug.legal_values('attachments.status')
+            legal_statuses = bug.server.legal_values('attachments.status')
             if legal_statuses:
                 legal_statuses.append('obsolete')
                 template.write("# possible statuses: %s\n" % abbreviation_help_string(legal_statuses))
