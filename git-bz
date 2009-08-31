@@ -224,7 +224,8 @@ default-priority = ---
 ################################################################################
 
 import base64
-from ConfigParser import RawConfigParser
+import cPickle as pickle
+from ConfigParser import RawConfigParser, NoOptionError
 import httplib
 from optparse import OptionParser
 import os
@@ -708,6 +709,44 @@ def encode_multipart_formdata(fields, files=None):
     body = CRLF.join(L)
     content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
     return content_type, body
+
+# Cache of constant-responses per bugzilla server
+# ===============================================
+
+CACHE_EXPIRY_TIME = 3600 * 24 # one day
+
+class Cache(object):
+    def __init__(self):
+        self.cfp = None
+
+    def __ensure(self, host):
+        if self.cfp == None:
+            self.cfp = RawConfigParser()
+            self.cfp.read(os.path.expanduser("~/.git-bz-cache"))
+
+        if self.cfp.has_section(host):
+            if time.time() > self.cfp.getfloat(host, "expires"):
+                self.cfp.remove_section(host)
+
+        if not self.cfp.has_section(host):
+            self.cfp.add_section(host)
+            self.cfp.set(host, "expires", time.time() + CACHE_EXPIRY_TIME)
+
+    def get(self, host, key):
+        self.__ensure(host)
+        try:
+            return pickle.loads(self.cfp.get(host, key))
+        except NoOptionError:
+            raise IndexError()
+
+    def set(self, host, key, value):
+        self.__ensure(host)
+        self.cfp.set(host, key, pickle.dumps(value))
+        f = open(os.path.expanduser("~/.git-bz-cache"), "w")
+        self.cfp.write(f)
+        f.close()
+
+cache = Cache()
 
 # General Utility Functions
 # =========================
