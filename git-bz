@@ -938,7 +938,8 @@ class Bug(object):
         self.bug_status = bug.find("bug_status").text
         if self.bug_status == "RESOLVED":
             self.resolution = bug.find("resolution").text
-        self.token = bug.find("token").text
+        token = bug.find("token")
+        self.token = token.text if token else None
 
         for attachment in bug.findall("attachment"):
             if attachment.get("ispatch") == "1" and not attachment.get("isobsolete") == "1" :
@@ -949,10 +950,12 @@ class Bug(object):
                 # the attachment
                 patch.description = attachment.find("desc").text
                 patch.date = attachment.find("date").text
-                patch.status = attachment.find("status").text
+                status = attachment.find("status")
+                patch.status = status.text if status else None
                 patch.filename = attachment.find("filename").text
                 patch.isprivate = attachment.get("isprivate") == "1"
-                patch.token = attachment.find("token").text
+                token = attachment.find("token")
+                patch.token = token.text if token else None
 
                 if attachmentdata:
                     data = attachment.find("data").text
@@ -980,7 +983,9 @@ class Bug(object):
             if e.errcode == 404:
                 raise NoXmlRpcError(e.errmsg)
             else:
-                die("Problem communicating with server: %s (%d)", e.errmsg, e.errcode)
+                print >>sys.stderr, "Problem filing bug via XML-RPC: %s (%d)\n" % (e.errmsg, e.errcode)
+                print >>sys.stderr, "falling back to form post\n"
+                raise NoXmlRpcError("Communication error")
 
     def _create_with_form(self, product, component, short_desc, comment, default_fields):
         fields = dict()
@@ -1070,8 +1075,10 @@ class Bug(object):
             if e.faultCode == -32000: # https://bugzilla.mozilla.org/show_bug.cgi?id=513511
                 return None
             raise
-        except xmlrpclib.ProtocolError, e: # old bugzilla, no XML-RPC
-            if e.errcode == 404:
+        except xmlrpclib.ProtocolError, e:
+            if e.errcode == 500: # older bugzilla versions die this way
+                return None
+            elif e.errcode == 404: # really old bugzilla, no XML-RPC
                 return None
             raise
 
@@ -1079,7 +1086,8 @@ class Bug(object):
     # as field_name=value
     def update(self, **changes):
         changes['id'] = str(self.id)
-        changes['token'] = self.token
+        if self.token:
+            changes['token'] = self.token
         # Since we don't send delta_ts we'll never get a mid-air collision
         # This is probably a good thing
 
@@ -1103,14 +1111,18 @@ class Bug(object):
         fields = {
             'action': 'update',
             'id': str(patch.attach_id),
-            'token': patch.token,
             'description': patch.description,
             'filename': patch.filename,
             'ispatch': "1",
             'isobsolete': "0",
             'isprivate': "1" if patch.isprivate else "0",
-            'attachments.status': patch.status,
         };
+
+        if patch.token:
+            fields['token'] = patch.token
+        if patch.status is not None:
+            fields['attachments.status'] = patch.status
+
         for (field, value) in changes.iteritems():
             if field == 'status': # encapsulate oddball form field name
                 field = 'attachments.status'
@@ -1450,23 +1462,30 @@ def edit_bug(bug, applied_commits=None):
         template.write("#")
     template.write("Resolution: FIXED\n")
     if len(bug.patches) > 0:
-        if len(newly_applied_patches) > 0 or len(obsoleted_patches) > 0:
-            template.write("\n# Lines below change patch status, unless commented out\n")
-        else:
-            template.write("\n# To change patch status, uncomment below, edit 'committed' as appropriate.\n")
-        legal_statuses = bug.legal_values('attachments.status')
-        if legal_statuses:
-            legal_statuses.append('obsolete')
-            template.write("# possible statuses: %s\n" % abbreviation_help_string(legal_statuses))
-
-        for patch in bug.patches:
-            if patch in newly_applied_patches:
-                new_status = "committed"
-            elif patch in obsoleted_patches:
-                new_status = "obsolete"
+        patches_have_status = any((patch.status is not None for patch in bug.patches))
+        if patches_have_status:
+            if len(newly_applied_patches) > 0 or len(obsoleted_patches) > 0:
+                template.write("\n# Lines below change patch status, unless commented out\n")
             else:
-                new_status = "#committed"
-            template.write("%s @%d - %s - %s\n" % (new_status, patch.attach_id, patch.description, patch.status))
+                template.write("\n# To change patch status, uncomment below, edit 'committed' as appropriate.\n")
+            legal_statuses = bug.legal_values('attachments.status')
+            if legal_statuses:
+                legal_statuses.append('obsolete')
+                template.write("# possible statuses: %s\n" % abbreviation_help_string(legal_statuses))
+
+            for patch in bug.patches:
+                if patch in newly_applied_patches:
+                    new_status = "committed"
+                elif patch in obsoleted_patches:
+                    new_status = "obsolete"
+                else:
+                    new_status = "#committed"
+                template.write("%s @%d - %s - %s\n" % (new_status, patch.attach_id, patch.description, patch.status))
+        else:
+            template.write("\n# To mark patches obsolete, uncomment below\n")
+            for patch in bug.patches:
+                template.write("#obsolete @%d - %s\n" % (patch.attach_id, patch.description))
+
         template.write("\n")
 
     lines = edit_template(template.getvalue())
@@ -1509,11 +1528,16 @@ def edit_bug(bug, applied_commits=None):
 
     for (attachment_id, status) in changed_attachments.iteritems():
         patch = None
-        if legal_statuses:
-            try:
-                status = expand_abbreviation(status, legal_statuses)
-            except ValueError:
-                die("Bad patch status: %s" % status)
+        if patches_have_status:
+            if legal_statuses:
+                try:
+                    status = expand_abbreviation(status, legal_statuses)
+                except ValueError:
+                    die("Bad patch status: %s" % status)
+        else:
+            if status != "obsolete":
+                die("Can't mark patch as '%s'; only obsolete is supported on %s" % (status,
+                                                                                    bug.server.host))
         for p in bug.patches:
             if p.attach_id == attachment_id:
                 patch = p
