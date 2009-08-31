@@ -1470,7 +1470,7 @@ def filter_patches(bug, applied_commits):
             newly_applied_patches[patch] = applied_subjects[patch.description]
             seen_subjects.add(patch)
         else:
-            unapplied_patches.append(patch)
+            unapplied_patches.add(patch)
 
     return newly_applied_patches, obsoleted_patches, unapplied_patches
 
