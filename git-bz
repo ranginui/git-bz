@@ -1823,7 +1823,7 @@ elif command == 'push':
     min_args = 0
     max_args = 1000 # no max
 else:
-    print >>sys.stderr, "Usage: git bz [add-url|apply|attach|edit|file] [options]"
+    print >>sys.stderr, "Usage: git bz [add-url|apply|attach|edit|file|push] [options]"
     sys.exit(1)
 
 global_options, args = parser.parse_args()
