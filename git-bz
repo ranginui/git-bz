@@ -1551,7 +1551,7 @@ def edit_bug(bug, applied_commits=None):
             attachment_changes['comment'] = comment
             del bug_changes['comment']
         if status == 'obsolete':
-            attachment_changes['isobsolete'] = 1
+            attachment_changes['isobsolete'] = "1"
         else:
             attachment_changes['status'] = status
         bug.update_patch(patch, **attachment_changes)
