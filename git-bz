@@ -939,7 +939,7 @@ class Bug(object):
         if self.bug_status == "RESOLVED":
             self.resolution = bug.find("resolution").text
         token = bug.find("token")
-        self.token = token.text if token else None
+        self.token = None if token is None else token.text
 
         for attachment in bug.findall("attachment"):
             if attachment.get("ispatch") == "1" and not attachment.get("isobsolete") == "1" :
@@ -951,11 +951,11 @@ class Bug(object):
                 patch.description = attachment.find("desc").text
                 patch.date = attachment.find("date").text
                 status = attachment.find("status")
-                patch.status = status.text if status else None
+                patch.status = None if status is None else status.text
                 patch.filename = attachment.find("filename").text
                 patch.isprivate = attachment.get("isprivate") == "1"
                 token = attachment.find("token")
-                patch.token = token.text if token else None
+                patch.token = None if token is None else token.text
 
                 if attachmentdata:
                     data = attachment.find("data").text
