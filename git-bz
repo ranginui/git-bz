@@ -1215,22 +1215,24 @@ class Bug(object):
 # The Commands
 # =============
 
+def commit_needs_url(commit, bug_id):
+        pat = re.compile(r"(?<!\d)%d(?!\d)" % bug_id)
+        return (pat.search(commit.subject) is None and
+                pat.search(get_body(commit)) is None)
+
 def check_add_url(commits, bug_id=None, is_add_url=False):
     if bug_id != None:
         # We only need to check the commits that we'll add the URL to
-        def needs_url(commit):
-            body = get_body(commit)
-            return str(bug_id) not in body
-        commits = filter(needs_url, commits)
+        commits = [commit for commit in commits if commit_needs_url(commit, bug_id)]
 
     if len(commits) == 0: # Nothing to do
         return
 
     try:
-        git.diff(exit_code=True)
-        git.diff(exit_code=True, cached=True)
+        git.diff(exit_code=True, _quiet=True)
+        git.diff(exit_code=True, cached=True, _quiet=True)
     except CalledProcessError:
-        die("You must commit (or stash) all changes before using -u/--add-url")
+        die("Cannot add bug reference to commit message(s); You must commit (or stash) all changes first")
 
     for commit in commits:
         # check that the commit is an ancestor of the current revision
@@ -1261,6 +1263,11 @@ def check_add_url(commits, bug_id=None, is_add_url=False):
             sys.exit(1)
 
 def add_url(bug, commits):
+    # Avoid the rebase if nothing to do
+    commits = [commit for commit in commits if commit_needs_url(commit, bug.id)]
+    if len(commits) == 0: # Nothing to do
+        return
+
     oldest_commit = commits[-1]
 
     newer_commits = rev_list_commits(commits[0].id + "..HEAD")
@@ -1274,7 +1281,7 @@ def add_url(bug, commits):
         for commit in reversed(commits):
             body = get_body(commit)
 
-            if str(bug.id) in body:
+            if not commit_needs_url(commit, bug.id):
                 print "Recommitting", commit.id[0:7], commit.subject, "(already has bug #)"
                 git.cherry_pick(commit.id)
                 # Find the new commit ID, though it doesn't matter much here
@@ -1313,8 +1320,15 @@ def do_add_url(bug_reference, commit_or_revision_range):
     print bug.get_url()
     print
 
+    found = False
     for commit in commits:
-        print commit.id[0:7], commit.subject
+        if commit_needs_url(commit, bug.id):
+            print commit.id[0:7], commit.subject
+            found = True
+        else:
+            print "SKIPPING", commit.id[0:7], commit.subject
+    if not found:
+        sys.exit(0)
 
     print
     if not prompt("Add bug URL to above commits?"):
