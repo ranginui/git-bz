@@ -1563,8 +1563,6 @@ def edit_bug(bug, applied_commits=None):
         return
 
     bug_changes = {}
-    if comment != "":
-        bug_changes['comment'] = comment
     if resolution is not None:
         if legal_resolutions:
             try:
@@ -1573,6 +1571,22 @@ def edit_bug(bug, applied_commits=None):
                 die("Bad resolution: %s" % resolution)
         bug_changes['bug_status'] = 'RESOLVED'
         bug_changes['resolution'] = resolution
+
+    if comment != "":
+        if len(bug_changes) == 0 and len(changed_attachments) == 1:
+            # We can add the comment when we submit the attachment change.
+            # Bugzilla will add a helpful notation ad we'll only send out
+            # one set of email
+            pass # We'll put the comment with the attachment
+        else:
+            bug_changes['comment'] = comment
+
+    # If we did the attachment updates first, we'd have to fetch a new
+    # token hash for the bug, since they'll change it. But each attachment
+    # has an individual token hash for just that attachment, so we can
+    # do the attachment updates afterwards.
+    if len(bug_changes) > 0:
+        bug.update(**bug_changes)
 
     for (attachment_id, status) in changed_attachments.iteritems():
         patch = None
@@ -1592,12 +1606,8 @@ def edit_bug(bug, applied_commits=None):
         if not patch:
             die("%d is not a valid attachment ID for Bug %d" % (attachment_id, bug.id))
         attachment_changes = {}
-        # Try to figure out when the comment is a comment on an attachment;
-        # Bugzilla will add a helpful notation if we submit the comment this way
-        # and we'll only send out one set of email
-        if comment != "" and len(changed_attachments) == 1 and resolution is None:
+        if comment != "" and not 'comment' in bug_changes: # See above
             attachment_changes['comment'] = comment
-            del bug_changes['comment']
         if status == 'obsolete':
             attachment_changes['isobsolete'] = "1"
         else:
@@ -1607,9 +1617,6 @@ def edit_bug(bug, applied_commits=None):
             print "Marked attachment as obsolete: %s - %s " % (patch.attach_id, patch.description)
         else:
             print "Changed status of attachment to %s: %s - %s" % (status, patch.attach_id, patch.description)
-
-    if len(bug_changes) > 0:
-        bug.update(**bug_changes)
 
     if resolution is not None:
         print "Resolved as %s bug %d - %s" % (resolution, bug.id, bug.short_desc)
