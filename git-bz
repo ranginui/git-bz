@@ -33,8 +33,10 @@
 #
 #    For each specified commit, rewrite the commit message to add the URL
 #    of the given bug. You should only do this if you haven't already pushed
-#    the commit publically. Running this directly is most useful as a fixup if
-#    you forget to pass -u/--add-url to 'git bz attach' or 'git bz file'.
+#    the commit publically. You won't need this very often, since
+#    'git bz file' and 'git bz attach' do this automaticlaly.
+#
+#    If the bug number is already found in the commit, then does nothing.
 #
 #    Example:
 #
@@ -69,6 +71,10 @@
 #    If -e/--edit is specified, then the user can edit the description and
 #    comment for each patch, and (by uncommenting lines) obsolete old patches.
 #
+#    The commit message will automatically be rewritten to include the URL of
+#    the bug (see 'git bz add-url'). This can be suppressed with the
+#    -n/--no-add-url option.
+#
 #    Examples:
 #
 #       # Attach the last commit
@@ -76,10 +82,6 @@
 #
 #       # Attach everything starting at an old commit
 #       git bz attach bugzilla.gnome.org:1234 b50ea9bd^..
-#
-#       # Attach a single old commit and rewrite the commit message
-#       # to include the bug URL. (See 'git bz add-url')
-#       git bz attach -u bugzilla.gnome.org:1234 b50ea9bd
 #
 #  git bz edit [<bug reference> | <commit> | <revision range>]
 #
@@ -105,14 +107,14 @@
 #     is named, the summary defaults to the subject of the commit. The product and
 #     component must be specified unless you have configured defaults.
 #
+#    The commit message will automatically be rewritten to include the URL of
+#    the newly filed bug (see 'git bz add-url') before attaching the patch. This
+#    can be suppressed with the -n/--no-add-url option.
+#
 #     Examples:
 #
 #       # File the last commit as a new bug on the default tracker
 #       git bz file my-product/some-component HEAD
-#
-#       # Same but rewrite the commit message to include the URL of the
-#       # newly filed bug. (See 'git bz add-url')
-#       git bz file -u my-product/some-component HEAD
 #
 #       # File a bug with a series of patches starting from an old commit
 #       # on a different bug tracker
@@ -1841,9 +1843,11 @@ parser = OptionParser()
 parser.add_option("-b", "--bugzilla", metavar="HOST_OR_ALIAS",
                   help="bug tracker to use")
 
-def add_add_url_option():
+def add_add_url_options(default):
     parser.add_option("-u", "--add-url", action="store_true",
-                      help="rewrite commits to add the bug URL")
+                      help="rewrite commits to add the bug URL" + (" [default]" if default else ""))
+    parser.add_option("-n", "--no-add-url", action="store_false", dest="add_url",
+                      help="don't rewrite commits to add the bug URL" + (" [default]" if not default else ""))
 
 def add_edit_option():
     parser.add_option("-e", "--edit", action="store_true",
@@ -1854,11 +1858,11 @@ if command == 'add-url':
     min_args = max_args = 2
 elif command == 'apply':
     parser.set_usage("git bz apply [options] <bug reference>");
-    add_add_url_option()
+    add_add_url_options(default=False)
     min_args = max_args = 1
 elif command == 'attach':
     parser.set_usage("git bz attach [options] <bug reference> [<since | <revision range>]");
-    add_add_url_option()
+    add_add_url_options(default=True)
     add_edit_option()
     min_args = max_args = 2
 elif command == 'edit':
@@ -1868,7 +1872,7 @@ elif command == 'edit':
     min_args = max_args = 1
 elif command == 'file':
     parser.set_usage("git bz file [options] <product>/<component> [<since> | <revision range>]");
-    add_add_url_option()
+    add_add_url_options(default=True)
     min_args = 1
     max_args = 2
 elif command == 'push':
@@ -1890,14 +1894,23 @@ if len(args) < min_args or len(args) > max_args:
 if command == 'add-url':
     do_add_url(*args)
 elif command == 'apply':
+    if global_options.add_url is None:
+        global_options.add_url = False
+
     do_apply(*args)
 elif command == 'attach':
+    if global_options.add_url is None:
+        global_options.add_url = True
+
     do_attach(*args)
 elif command == 'edit':
     if global_options.pushed:
         exit
     do_edit(*args)
 elif command == 'file':
+    if global_options.add_url is None:
+        global_options.add_url = True
+
     do_file(*args)
 elif command == 'push':
     do_push(*args)
