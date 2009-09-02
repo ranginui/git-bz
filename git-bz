@@ -31,17 +31,20 @@
 #
 #  git bz add-url [options] <bug reference> [<commit> | <revision range>]
 #
-#    For each specified commit, rewrite the commit message to add the URL
-#    of the given bug. You should only do this if you haven't already pushed
+#    For each specified commit, rewrite the commit message to add a reference
+#    to the given bug. You should only do this if you haven't already pushed
 #    the commit publically. You won't need this very often, since
 #    'git bz file' and 'git bz attach' do this automaticlaly.
 #
-#    If the bug number is already found in the commit, then does nothing.
+#    If the bug number is already found in the commit message, then does nothing.
 #
 #    Example:
 #
 #       # Add a bug URL to the last commit
 #       git bz attach 1234 HEAD
+#
+#    The default behavior is to append the bug URL to the commit body. See the
+#    section 'Add URL Method' below for how to change this.
 #
 #  git bz apply [options] <bug reference>
 #
@@ -71,8 +74,8 @@
 #    If -e/--edit is specified, then the user can edit the description and
 #    comment for each patch, and (by uncommenting lines) obsolete old patches.
 #
-#    The commit message will automatically be rewritten to include the URL of
-#    the bug (see 'git bz add-url'). This can be suppressed with the
+#    The commit message will automatically be rewritten to include a reference
+#    to the bug (see 'git bz add-url'). This can be suppressed with the
 #    -n/--no-add-url option.
 #
 #    Examples:
@@ -107,7 +110,7 @@
 #     is named, the summary defaults to the subject of the commit. The product and
 #     component must be specified unless you have configured defaults.
 #
-#    The commit message will automatically be rewritten to include the URL of
+#    The commit message will automatically be rewritten to include a reference to
 #    the newly filed bug (see 'git bz add-url') before attaching the patch. This
 #    can be suppressed with the -n/--no-add-url option.
 #
@@ -145,6 +148,35 @@
 #  <host>:<id>  : bug # on the given host
 #  <alias>:<id> : bug # on the given bug tracker alias (see below)
 #  <url>        : An URL of the form http://<hostname>/show_bug.cgi?id=<id>
+#
+# Add URL Method
+# ==============
+# You can configure 'git bz add-url', and the --add-url option of 'git
+# bz [apply|attach|file]' to add the URL different ways or to add a
+# non-URL bug reference, using the git config variable
+# 'bz.add-url-method'.
+#
+# It has the form
+#
+#  <method>:<format>
+#
+# Method is:
+#   subject-prepend - prepend to the subject (separated with a space)
+#   subject-append  - apend to the subject (separated with a space)
+#   body-prepend    - prepend to the body (separated with a blank line)
+#   body-append     - append to the body (separated with a blank line)
+#
+# Format supports the following escapes:
+#   %u - the bug URL
+#   %d - the bug #
+#   %n - a newline
+#   %% - a percent
+#
+# Examples:
+#   # The default
+#   git config bz.add-url-method body-append:%u
+#   # 'Bug 34323 - Speed up frobnification'
+#   git config bz.add-url-method subject-prepend:Bug %d -
 #
 # Aliases
 # =======
@@ -411,6 +443,12 @@ def get_default_component():
         return git.config('bz.default-component', get=True)
     except CalledProcessError:
         return None
+
+def get_add_url_method():
+    try:
+        return git.config('bz.add-url-method', get=True)
+    except CalledProcessError:
+        return "body-append:%u"
 
 # Per-tracker configuration variables
 # ===================================
@@ -1262,11 +1300,66 @@ def check_add_url(commits, bug_id=None, is_add_url=False):
             print "Can't rewrite this commit or an ancestor commit to add bug URL"
             sys.exit(1)
 
+def bad_url_method(add_url_method):
+    die("""add-url-method '%s' is invalid
+Should be [subject-prepend|subject-append|body-prepend|body-append]:<format>""" %
+        add_url_method)
+
+def add_url_to_subject_body(subject, body, bug):
+    add_url_method = get_add_url_method()
+    if not ':' in add_url_method:
+        bad_url_method(add_url_method)
+
+    method, format = add_url_method.split(':', 1)
+
+    def sub_percent(m):
+        if m.group(1) == 'u':
+            return bug.get_url()
+        elif m.group(1) == 'd':
+            return str(bug.id)
+        elif m.group(1) == 'n':
+            return "\n"
+        elif m.group(1) == '%':
+            return "%"
+        else:
+            die("Bad add-url-method escape %%%s" % m.group(1))
+
+    formatted = re.sub("%(.)", sub_percent, format)
+
+    if method == 'subject-prepend':
+        subject = formatted + " " + subject
+    elif method == 'subject-append':
+        subject = subject + " " + formatted
+    elif method == 'body-prepend':
+        body = formatted + "\n\n" + body
+    elif method == 'body-append':
+        body = body + "\n\n" + formatted
+    else:
+        bad_url_method(add_url_method)
+
+    return subject, body
+
+def validate_add_url_method(bug):
+    # Dry run
+    add_url_to_subject_body("", "", bug)
+
+def add_url_to_head_commit(commit, bug):
+    subject = commit.subject
+    body = get_body(commit)
+
+    subject, body = add_url_to_subject_body(subject, body, bug)
+
+    input = subject + "\n\n" + body
+    git.commit(file="-", amend=True, _input=input)
+
 def add_url(bug, commits):
     # Avoid the rebase if nothing to do
     commits = [commit for commit in commits if commit_needs_url(commit, bug.id)]
     if len(commits) == 0: # Nothing to do
         return
+
+    # Check that the add-url method is valid before starting the rebase
+    validate_add_url_method(bug)
 
     oldest_commit = commits[-1]
 
@@ -1279,8 +1372,6 @@ def add_url(bug, commits):
         git.reset(oldest_commit.id + "^", hard=True)
 
         for commit in reversed(commits):
-            body = get_body(commit)
-
             if not commit_needs_url(commit, bug.id):
                 print "Recommitting", commit.id[0:7], commit.subject, "(already has bug #)"
                 git.cherry_pick(commit.id)
@@ -1288,11 +1379,10 @@ def add_url(bug, commits):
                 commit.id = git.rev_list("HEAD^!")
                 continue
 
-            print "Adding URL  ", commit.id[0:7], commit.subject
+            print "Adding bug reference  ", commit.id[0:7], commit.subject
             git.cherry_pick(commit.id)
 
-            input = commit.subject + "\n\n" + body + "\n\n" + bug.get_url()
-            git.commit(file="-", amend=True, _input=input)
+            add_url_to_head_commit(commit, bug)
 
             # In this case, we need the new commit ID, so that when we later format the
             # patch, we format the patch with the added bug URL
