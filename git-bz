@@ -1436,6 +1436,10 @@ def do_apply(bug_reference):
     print
 
     for patch in bug.patches:
+        if patch.status == 'committed' or patch.status == 'rejected':
+            print "Skipping, %s: %s" % (patch.status, patch.description)
+            continue
+
         print patch.description
         if not prompt("Apply?"):
             continue
