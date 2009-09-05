@@ -552,6 +552,11 @@ class BugHandle:
         self.https = https
         self.id = id
 
+    def get_url(self):
+        return "%s://%s/show_bug.cgi?id=%s" % ("https" if self.https else "http",
+                                               self.host,
+                                               self.id)
+
     @staticmethod
     def parse(bug_reference):
         m = re.match("http(s?)://([^/]+)/show_bug.cgi\?id=([^&]+)", bug_reference)
@@ -1529,10 +1534,33 @@ def attach_commits(bug, commits, include_comments=True, edit_comments=False):
             obsoletes = []
         bug.create_patch(commit.subject, body, filename, patch, obsoletes=obsoletes)
 
-def do_attach(bug_reference, commit_or_revision_range):
-    bug = Bug.load(BugHandle.parse_or_die(bug_reference))
+def do_attach(*args):
+    if len(args) == 1:
+        commit_or_revision_range = args[0]
+        commits = get_commits(commit_or_revision_range)
 
-    commits = get_commits(commit_or_revision_range)
+        extracted = list(extract_and_collate_bugs(commits))
+        if len(extracted) == 0:
+            die("No bug references found in specified commits")
+        elif len(extracted) > 1:
+            # This could be sensible in the case of "attach updated patches
+            # for all these commits", but for now, just make it an error
+            die("Found multiple bug references specified commits:\n  " +
+                "\n  ".join((handle.get_url() for handle, _ in extracted)))
+
+        # extract_and_collate_bugs returns a list of commits that reference
+        # the handle, but we ignore that - we want to attach all of the
+        # specified commits, even if only some of the reference the bug
+        handle, _ = extracted[0]
+    else:
+        bug_reference = args[0]
+        commit_or_revision_range = args[1]
+
+        commits = get_commits(commit_or_revision_range)
+        handle = BugHandle.parse_or_die(bug_reference)
+
+    bug = Bug.load(handle)
+
     if global_options.add_url:
         check_add_url(commits, bug.id, is_add_url=False)
 
