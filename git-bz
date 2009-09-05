@@ -1292,7 +1292,7 @@ def check_add_url(commits, bug_id=None, is_add_url=False):
                 if is_add_url:
                     print "Aborting."
                 else:
-                    print "Aborting. You can use --no-add-url to turn off adding the URL"
+                    print "Aborting. You can use -n/--no-add-url to turn off adding the URL"
                 sys.exit(0)
 
     # Check for merge commits
@@ -1990,24 +1990,25 @@ def add_edit_option():
                       help="allow editing the bugzilla comment")
 
 if command == 'add-url':
-    parser.set_usage("git bz add-url [options] <bug reference> [<since | <revision range>]");
+    parser.set_usage("git bz add-url [options] <bug reference> (<commit> | <revision range>)");
     min_args = max_args = 2
 elif command == 'apply':
     parser.set_usage("git bz apply [options] <bug reference>");
     add_add_url_options(default=True)
     min_args = max_args = 1
 elif command == 'attach':
-    parser.set_usage("git bz attach [options] <bug reference> [<since | <revision range>]");
+    parser.set_usage("git bz attach [options] [<bug reference>] (<commit> | <revision range>)");
     add_add_url_options(default=True)
     add_edit_option()
-    min_args = max_args = 2
+    min_args = 1
+    max_args = 2
 elif command == 'edit':
-    parser.set_usage("git bz edit [options] [<bug reference> | <commit> | <revision range>]");
-    parser.add_option("-p", "--pushed", action="store_true",
+    parser.set_usage("git bz edit [options] (<bug reference> | <commit> | <revision range>)");
+    parser.add_option("", "--pushed", action="store_true",
                       help="pre-fill edit form treating the commits as pushed")
     min_args = max_args = 1
 elif command == 'file':
-    parser.set_usage("git bz file [options] <product>/<component> [<since> | <revision range>]");
+    parser.set_usage("git bz file [options] [[<product>]]/<component>] (<commit> | <revision range>)");
     add_add_url_options(default=True)
     min_args = 1
     max_args = 2
