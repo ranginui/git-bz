@@ -1966,7 +1966,7 @@ if command == 'add-url':
     min_args = max_args = 2
 elif command == 'apply':
     parser.set_usage("git bz apply [options] <bug reference>");
-    add_add_url_options(default=False)
+    add_add_url_options(default=True)
     min_args = max_args = 1
 elif command == 'attach':
     parser.set_usage("git bz attach [options] <bug reference> [<since | <revision range>]");
@@ -2003,7 +2003,7 @@ if command == 'add-url':
     do_add_url(*args)
 elif command == 'apply':
     if global_options.add_url is None:
-        global_options.add_url = False
+        global_options.add_url = True
 
     do_apply(*args)
 elif command == 'attach':
