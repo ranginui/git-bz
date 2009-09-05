@@ -6,10 +6,24 @@ any intention of working on it myself.
 
 - Owen
 
-Default to -e/--edit when only one commit
+Always do 'git bz attach --edit'
 
- When there is only one commit to attach, we might as well default to
- -e/--edit - it's more powerful than the prompt and still allows aborting.
+ Prompting doesn't have that much of an advantage over the edit buffer -
+ maybe a little easier to abort. And eliminating the need for --edit would
+ eliminate people having to find out about it and remember to specify it.
+
+Make it harder to change the description for 'git bz attach'
+
+ 'git bz push' really wants the description not to have been edited, but
+ it's pretty easy to accidentally edit the description; it might even
+ seem like changing it to 'new version of' is a good idea.
+
+ It probably just shouldn't be possible to edit the description at all.
+ We could do something like uncommenting:
+
+ # Description: Foo bar
+
+ To change it, but it doesn't seem useful.
 
 Automatically guess obvious obsoletes
 
@@ -35,9 +49,40 @@ More general patch application
   bugzilla to prime the author and commit message, but allow
   further editing of the commit message.
 
+Apply patches as a single mailbox
+
+  Instead of running 'git am' separately for each patch, combine
+  them into a mailbox and provide that to 'git am'. This will allow
+  'git am --resolved' to continue properly. It will, however,
+  require doing the 'add-url' work ahead of time by rewritig the
+  patches, since if 'git am' stops, we don't get called at the
+  end.
+
+Pass --3way to git-am
+
+  git am --3way (on application failure, attempt to use the blob
+  IDs in the commit to do a 3-way merge) is way, way better when
+  it works then just stopping and making the user do it by hand.
+
+  git am --reject (put rejects into .reject files, ignore the rest)
+  is also useful, though it interacts badly with --3way; that
+  probably needs to be fixed upstream.
+
 Make -u/--add-url kinder on the reflog
 
   -u works by resetting, then on each patch, running git cherry-pick
   followed by git commit --amend. It would be nice to only have one
   (informative) reflog entry for the entire process, or at least avoid
   the double commits.
+
+  The double commits could be avoided if if we did the 'rewrite patch'
+  thing for 'git bz apply'- then we could use it here too and just
+  pass the whole sequence to 'git am'.  And by setting
+  GIT_REFLOG_ACTION='bz add-url' it should work almost perfectly.
+
+  It wouldn't give a single reflog entry, but 'git rebase' and
+  'git am' don't show up as a single entry either. 'git rebase'
+  does show up as a single entry in 'git reflog show master'; that's
+  done by detaching from the branch during the operation. We could
+  do that as well.
+
