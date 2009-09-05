@@ -12,9 +12,9 @@ SYNOPSIS
 'git bz apply' [-n | --no-add-url] <bug reference>
 'git bz attach' [-n | --no-add-url] [-e |--edit] [<bug reference>] (<commit> | <revision range>)
 'git bz edit' (<bug reference> | <commit> | <revision range>)
-'git bz edit' --pushed (<commit> | <revision range>)
+'git bz edit' (--pushed | --fix <bug reference) (<commit> | <revision range>)
 'git bz file' [-n | --no-add-url] [[<product>]/<component>] (<commit> | <revision range>)
-'git bz push' [<repository> <refspec>...]
+'git bz push' [--fix <bug reference>] [<repository> <refspec>...]
 
 DESCRIPTION
 ------------
@@ -192,7 +192,11 @@ the status of patches.
 If the argument identifies a commit or commits rather than a bug
 then each bug referred to in the commits is edited in turn.
 
--p;;
+--fix=<bug reference>;;
+        Treat the specified commits as a fix for the bug. Similar
+	to attaching the commits with 'git bz attach' then using
+	'git bz edit --pushed'.
+
 --pushed;;
 	Attempt to automatically determine the correct comments, attachment
 	changes, and resolution for the bug from applying the specified commits
@@ -228,15 +232,21 @@ git bz -b bugs.freedesktop.org file my-product/some-component b50ea9bd^..
 push
 ~~~~
 
-'git bz push' [<repository> <refspec>...]
+'git bz push' [--fix] [<repository> <refspec>...]
 
 Exactly like 'git push', but 'git bz edit --pushed' is done for each
 bug referenced in the newly pushed commits.
 
 Note that ``newly pushed commit'' are commits that were added to any
 existing branch by the push. Commits don't have to be pushed to master
-to be considered newly pushed. However, commits pushed to on newly
+to be considered newly pushed. However, commits pushed to newly
 created branches will be ignored.
+
+--fix=<bug reference>;;
+        Treat the specified commits as a fix for the bug. Similar
+	to attaching the commits with 'git bz attach' before running
+	'git bz push'. This is in an-all-one-solution to use when you
+	have a fix that doesn't need any review or testing.
 
 AUTHENTICATION
 --------------

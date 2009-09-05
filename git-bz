@@ -950,12 +950,12 @@ class Bug(object):
         print "Bug %d - %s" % (self.id, short_desc)
         print self.get_url()
 
-    def create_patch(self, description, comment, filename, data, obsoletes=[]):
+    def create_patch(self, description, comment, filename, data, obsoletes=[], status='none'):
         fields = {}
         fields['bugid'] = str(self.id)
         fields['action'] = 'insert'
         fields['ispatch'] = '1'
-        fields['attachments.status'] = 'none'
+        fields['attachments.status'] = status
         fields['description'] = description
         if comment:
             fields['comment'] = comment
@@ -1329,7 +1329,7 @@ def edit_attachment_comment(bug, initial_description, initial_body):
 
     return description, comment, obsoletes
 
-def attach_commits(bug, commits, include_comments=True, edit_comments=False):
+def attach_commits(bug, commits, include_comments=True, edit_comments=False, status='none'):
     # We want to attach the patches in chronological order
     commits = list(commits)
     commits.reverse()
@@ -1346,7 +1346,7 @@ def attach_commits(bug, commits, include_comments=True, edit_comments=False):
         else:
             description = commit.subject
             obsoletes = []
-        bug.create_patch(commit.subject, body, filename, patch, obsoletes=obsoletes)
+        bug.create_patch(commit.subject, body, filename, patch, obsoletes=obsoletes, status=status)
 
 def do_attach(*args):
     if len(args) == 1:
@@ -1385,7 +1385,7 @@ def do_attach(*args):
         print "Bug %d - %s" % (bug.id, bug.short_desc)
         print
 
-        for commit in commits:
+        for commit in reversed(commits):
             print commit.id[0:7], commit.subject
 
         print
@@ -1426,13 +1426,13 @@ def filter_patches(bug, applied_commits):
 
     return newly_applied_patches, obsoleted_patches, unapplied_patches
 
-def edit_bug(bug, applied_commits=None):
+def edit_bug(bug, applied_commits=None, fix_commits=None):
     if applied_commits is not None:
         newly_applied_patches, obsoleted_patches, unapplied_patches = filter_patches(bug, applied_commits)
         mark_resolved = len(unapplied_patches) == 0 and bug.bug_status != "RESOLVED"
     else:
         newly_applied_patches = obsoleted_patches = set()
-        mark_resolved = False
+        mark_resolved = fix_commits is not None
 
     template = StringIO()
     template.write("# Bug %d - %s - %s" % (bug.id, bug.short_desc, bug.bug_status))
@@ -1441,6 +1441,15 @@ def edit_bug(bug, applied_commits=None):
     template.write("\n")
     template.write("# %s\n" % bug.get_url())
     template.write("# Enter comment on following lines; delete everything to abort\n\n")
+
+    if fix_commits is not None:
+        if len(fix_commits) == 1:
+            template.write("The following fix has been pushed:\n")
+        else:
+            template.write("The following fixes have been pushed:\n")
+        for commit in reversed(fix_commits):
+            template.write(commit.id[0:7] + " " + commit.subject + "\n")
+        template.write("\n")
 
     for patch in bug.patches:
         if patch in newly_applied_patches:
@@ -1461,6 +1470,7 @@ def edit_bug(bug, applied_commits=None):
     if not mark_resolved:
         template.write("#")
     template.write("Resolution: FIXED\n")
+
     if len(bug.patches) > 0:
         patches_have_status = any((patch.status is not None for patch in bug.patches))
         if patches_have_status:
@@ -1512,7 +1522,20 @@ def edit_bug(bug, applied_commits=None):
 
     if resolution is None and len(changed_attachments) == 0 and comment == "":
         print "No changes, not editing Bug %d - %s" % (bug.id, bug.short_desc)
-        return
+        return False
+
+    if fix_commits is not None:
+        if global_options.add_url:
+            # We don't want to add the URLs until the user has decided not to
+            # cancel the operation. But the comment that the user edited
+            # included commit IDs. If adding the URL changes the commit IDs
+            # we need to replace them in the comment.
+            old_ids = [(commit, commit.id[0:7]) for commit in fix_commits]
+            add_url(bug, fix_commits)
+            for commit, old_id in old_ids:
+                new_id = commit.id[0:7]
+                if new_id != old_id:
+                    comment = comment.replace(old_id, new_id)
 
     bug_changes = {}
     if resolution is not None:
@@ -1570,6 +1593,9 @@ def edit_bug(bug, applied_commits=None):
         else:
             print "Changed status of attachment to %s: %s - %s" % (status, patch.attach_id, patch.description)
 
+    if fix_commits is not None:
+        attach_commits(bug, fix_commits, status='committed')
+
     if resolution is not None:
         print "Resolved as %s bug %d - %s" % (resolution, bug.id, bug.short_desc)
     elif len(changed_attachments) > 0:
@@ -1577,6 +1603,8 @@ def edit_bug(bug, applied_commits=None):
     else:
         print "Added comment to bug %d - %s" % (bug.id, bug.short_desc)
     print bug.get_url()
+
+    return True
 
 LOG_BUG_REFERENCE = re.compile(r"""
 (\b[Ss]ee\s+(?:\S+\s+){0,2})?
@@ -1635,7 +1663,9 @@ def do_edit(bug_reference_or_revision_range):
     try:
         handle = BugHandle.parse(bug_reference_or_revision_range)
         if global_options.pushed:
-            die("-p/--pushed can't be used together with a bug reference")
+            die("--pushed can't be used together with a bug reference")
+        if global_options.fix is not None:
+            die("--fix requires commits to be specified")
         bug = Bug.load(handle)
         edit_bug(bug)
     except BugParseError, e:
@@ -1643,14 +1673,20 @@ def do_edit(bug_reference_or_revision_range):
             commits = get_commits(bug_reference_or_revision_range)
         except CalledProcessError:
             die("'%s' isn't a valid bug reference or revision range" % bug_reference_or_revision_range)
-        # Process from oldest to newest
-        commits.reverse()
-        for handle, commits in extract_and_collate_bugs(commits):
+
+        if global_options.fix is not None:
+            handle = BugHandle.parse_or_die(global_options.fix)
             bug = Bug.load(handle)
-            if global_options.pushed:
-                edit_bug(bug, commits)
-            else:
-                edit_bug(bug)
+            edit_bug(bug, fix_commits=commits)
+        else:
+            # Process from oldest to newest
+            commits.reverse()
+            for handle, commits in extract_and_collate_bugs(commits):
+                bug = Bug.load(handle)
+                if global_options.pushed:
+                    edit_bug(bug, applied_commits=commits)
+                else:
+                    edit_bug(bug)
 
 PRODUCT_COMPONENT_HELP = """
 
@@ -1711,7 +1747,7 @@ def do_file(*args):
 # Component: %(component)s
 # Patches to be attached:
 """ % { 'product': product, 'component': component })
-    for commit in commits:
+    for commit in reversed(commits):
         template.write("#   " + commit.id[0:7] + " " + commit.subject + "\n")
 
     lines = edit_template(template.getvalue())
@@ -1737,20 +1773,24 @@ def do_file(*args):
 
     attach_commits(bug, commits, include_comments=include_comments)
 
-def do_push(*args):
+def run_push(*args, **kwargs):
     # Predicting what 'git pushes' pushes based on the command line
     # would be extraordinarily complex, but the interactive output goes
     # to stderr and is somewhat ambiguous. We do the best we can parsing
     # it. git 1.6.4 adds --porcelain to push, so we can use that eventually.
+    dry = kwargs['dry'] if 'dry' in kwargs else False
+    options = dict()
+    if dry:
+        options['dry'] = True
+    if global_options.force:
+        options['force'] = True
     try:
-        if global_options.force:
-            out, err = git.push(*args, force=True, _return_stderr=True)
-        else:
-            out, err = git.push(*args, _return_stderr=True)
+        out, err = git.push(*args, _return_stderr=True, **options)
     except CalledProcessError:
         return
-    # Echo the output so the user gets feedback about what happened
-    print >>sys.stderr, err
+    if not dry:
+        # Echo the output so the user gets feedback about what happened
+        print >>sys.stderr, err
 
     commits = []
     for line in err.strip().split("\n"):
@@ -1776,9 +1816,25 @@ def do_push(*args):
             seen_commit_ids.add(commit.id)
             unique_commits.append(commit)
 
-    for handle, commits in extract_and_collate_bugs(commits):
+    return unique_commits
+
+def do_push(*args):
+    if global_options.fix:
+        handle = BugHandle.parse_or_die(global_options.fix)
         bug = Bug.load(handle)
-        edit_bug(bug, commits)
+
+        # We need the user to confirm before we add the URLs to the commits
+        # We need to add the URLs to the commits before we push
+        # We need to push in order to find out what commits we are pushing
+        # So, we push --dry first
+        commits = run_push(*args, dry=True)
+        if edit_bug(bug, fix_commits=commits):
+            run_push(*args)
+    else:
+        unique_commits = run_push(*args)
+        for handle, commits in extract_and_collate_bugs(unique_commits):
+            bug = Bug.load(handle)
+            edit_bug(bug, commits)
 
 ################################################################################
 
@@ -1790,29 +1846,33 @@ else:
 sys.argv[1:2] = []
 
 parser = OptionParser()
-parser.add_option("-b", "--bugzilla", metavar="HOST_OR_ALIAS",
+parser.add_option("-b", "--bugzilla", metavar="<host or alias>",
                   help="bug tracker to use")
 
-def add_add_url_options(default):
+def add_add_url_options():
     parser.add_option("-u", "--add-url", action="store_true",
-                      help="rewrite commits to add the bug URL" + (" [default]" if default else ""))
+                      help="rewrite commits to add the bug URL [default]")
     parser.add_option("-n", "--no-add-url", action="store_false", dest="add_url",
-                      help="don't rewrite commits to add the bug URL" + (" [default]" if not default else ""))
+                      help="don't rewrite commits to add the bug URL")
 
 def add_edit_option():
     parser.add_option("-e", "--edit", action="store_true",
                       help="allow editing the bugzilla comment")
+
+def add_fix_option():
+    parser.add_option("", "--fix", metavar="<bug reference>",
+                      help="attach commits and close bug")
 
 if command == 'add-url':
     parser.set_usage("git bz add-url [options] <bug reference> (<commit> | <revision range>)");
     min_args = max_args = 2
 elif command == 'apply':
     parser.set_usage("git bz apply [options] <bug reference>");
-    add_add_url_options(default=True)
+    add_add_url_options()
     min_args = max_args = 1
 elif command == 'attach':
     parser.set_usage("git bz attach [options] [<bug reference>] (<commit> | <revision range>)");
-    add_add_url_options(default=True)
+    add_add_url_options()
     add_edit_option()
     min_args = 1
     max_args = 2
@@ -1820,14 +1880,18 @@ elif command == 'edit':
     parser.set_usage("git bz edit [options] (<bug reference> | <commit> | <revision range>)");
     parser.add_option("", "--pushed", action="store_true",
                       help="pre-fill edit form treating the commits as pushed")
+    add_add_url_options()
+    add_fix_option()
     min_args = max_args = 1
 elif command == 'file':
     parser.set_usage("git bz file [options] [[<product>]]/<component>] (<commit> | <revision range>)");
-    add_add_url_options(default=True)
+    add_add_url_options()
     min_args = 1
     max_args = 2
 elif command == 'push':
     parser.set_usage("git bz push [options] [<repository> <refspec>...]");
+    add_add_url_options()
+    add_fix_option()
     parser.add_option("-f", "--force", action="store_true",
                       help="allow non-fast-forward commits")
     min_args = 0
@@ -1838,6 +1902,9 @@ else:
 
 global_options, args = parser.parse_args()
 
+if global_options.add_url is None:
+    global_options.add_url = True
+
 if len(args) < min_args or len(args) > max_args:
     parser.print_usage()
     sys.exit(1)
@@ -1845,23 +1912,14 @@ if len(args) < min_args or len(args) > max_args:
 if command == 'add-url':
     do_add_url(*args)
 elif command == 'apply':
-    if global_options.add_url is None:
-        global_options.add_url = True
-
     do_apply(*args)
 elif command == 'attach':
-    if global_options.add_url is None:
-        global_options.add_url = True
-
     do_attach(*args)
 elif command == 'edit':
     if global_options.pushed:
         exit
     do_edit(*args)
 elif command == 'file':
-    if global_options.add_url is None:
-        global_options.add_url = True
-
     do_file(*args)
 elif command == 'push':
     do_push(*args)
