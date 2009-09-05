@@ -1173,18 +1173,23 @@ def add_url(bug, commits):
 
     newer_commits = rev_list_commits(commits[0].id + "..HEAD")
 
-    head_id = newer_commits[0].id if newer_commits else oldest_commit.id
+    orig_head = newer_commits[0].id if newer_commits else commits[0].id
 
     try:
-        print "Resetting to the parent revision"
-        git.reset(oldest_commit.id + "^", hard=True)
+        branch_name = git.symbolic_ref("HEAD", q=True)
+    except CalledProcessError:
+        branch_name = None
+    try:
+        # Detach HEAD from the branch; this gives a cleaner reflog for the branch
+        print "Moving to starting point"
+        git.checkout(oldest_commit.id + "^", q=True)
 
         for commit in reversed(commits):
             if not commit_needs_url(commit, bug.id):
                 print "Recommitting", commit.id[0:7], commit.subject, "(already has bug #)"
                 git.cherry_pick(commit.id)
                 # Find the new commit ID, though it doesn't matter much here
-                commit.id = git.rev_list("HEAD^!")
+                commit.id = git.rev_parse("HEAD")
                 continue
 
             print "Adding bug reference  ", commit.id[0:7], commit.subject
@@ -1194,18 +1199,24 @@ def add_url(bug, commits):
 
             # In this case, we need the new commit ID, so that when we later format the
             # patch, we format the patch with the added bug URL
-            commit.id = git.rev_list("HEAD^!")
+            commit.id = git.rev_parse("HEAD")
 
         for commit in reversed(newer_commits):
             print "Recommitting", commit.id[0:7], commit.subject
             git.cherry_pick(commit.id)
-            commit.id = git.rev_list("HEAD^!")
+            commit.id = git.rev_parse("HEAD")
+
+        new_head = newer_commits[0].id if newer_commits else commits[0].id
+        if branch_name is not None:
+            git.update_ref("-m", "bz add-url: adding references to %s" % bug.get_url(),
+                           branch_name, new_head)
+            git.symbolic_ref("HEAD", branch_name)
     except:
-        traceback.print_exc(None, sys.stderr)
-        print >>sys.stderr
-        print >>sys.stderr, "Something went wrong rewriting commmits to add URLs"
-        print >>sys.stderr, "To restore to the original state: git reset --hard %s" % head_id[0:12]
-        sys.exit(1)
+        print "Cleaning up back to original state on error"
+        git.reset(orig_head, hard=True)
+        if branch_name is not None:
+            git.symbolic_ref("HEAD", branch_name)
+        raise
 
 def do_add_url(bug_reference, commit_or_revision_range):
     commits = get_commits(commit_or_revision_range)

@@ -70,19 +70,12 @@ Pass --3way to git-am
 
 Make -u/--add-url kinder on the reflog
 
-  -u works by resetting, then on each patch, running git cherry-pick
-  followed by git commit --amend. It would be nice to only have one
-  (informative) reflog entry for the entire process, or at least avoid
-  the double commits.
+  -u works each patch, running git cherry-pick followed by
+  git commit --amend. It would be nice to only avoid the double
+  commits.
 
   The double commits could be avoided if if we did the 'rewrite patch'
   thing for 'git bz apply'- then we could use it here too and just
   pass the whole sequence to 'git am'.  And by setting
   GIT_REFLOG_ACTION='bz add-url' it should work almost perfectly.
-
-  It wouldn't give a single reflog entry, but 'git rebase' and
-  'git am' don't show up as a single entry either. 'git rebase'
-  does show up as a single entry in 'git reflog show master'; that's
-  done by detaching from the branch during the operation. We could
-  do that as well.
 
