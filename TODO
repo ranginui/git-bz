@@ -31,10 +31,6 @@ Automatically guess obvious obsoletes
  matches the Subject of the attachment, start the Obsoletes line
  uncommented?
 
-Handle redirects:
-
-  Should follow redirects, both to different URLs and http => https
-
 Better display of errors
 
   The switch to XML-RPC greatly improves errors when filing a new bug,

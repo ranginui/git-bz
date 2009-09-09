@@ -76,7 +76,7 @@ import tempfile
 import time
 import traceback
 import xmlrpclib
-import urllib
+import urlparse
 from xml.etree.cElementTree import ElementTree
 
 # Globals
@@ -697,6 +697,20 @@ class BugPatch(object):
 class NoXmlRpcError(Exception):
     pass
 
+connections = {}
+
+def get_connection(host, https):
+    identifier = (host, https)
+    if not identifier in connections:
+        if https:
+            connection = httplib.HTTPSConnection(host, 443)
+        else:
+            connection = httplib.HTTPConnection(host, 80)
+
+        connections[identifier] = connection
+
+    return connections[identifier]
+
 class BugServer(object):
     def __init__(self, host, https):
         self.host = host
@@ -704,17 +718,7 @@ class BugServer(object):
 
         self.cookies = get_bugzilla_cookies(host)
 
-        self._connection = None
         self._xmlrpc_proxy = None
-
-    def get_connection(self):
-        if self._connection is None:
-            if self.https:
-                self._connection = httplib.HTTPSConnection(self.host, 443)
-            else:
-                self._connection = httplib.HTTPConnection(self.host, 80)
-
-        return self._connection
 
     def get_cookie_string(self):
         return ("Bugzilla_login=%s; Bugzilla_logincookie=%s" %
@@ -725,8 +729,71 @@ class BugServer(object):
         headers['Cookie'] = self.get_cookie_string()
         headers['User-Agent'] = "git-bz"
 
-        self.get_connection().request(method, url, data, headers)
-        return self.get_connection().getresponse()
+        seen_urls = []
+        connection = get_connection(self.host, self.https)
+        while True:
+            connection.request(method, url, data, headers)
+            response = connection.getresponse()
+            seen_urls.append(url)
+
+            # Redirect status codes:
+            #
+            # 301 (Moved Permanently): Redo with the new URL,
+            #   save the new location.
+            # 303 (See Other): Redo with the method changed to GET/HEAD.
+            # 307 (Temporary Redirect): Redo with the new URL, don't
+            #   save the new location.
+            #
+            # [ For 301/307, you are supposed to ask the user if the
+            #   method isn't GET/HEAD, but we're automating anyways... ]
+            #
+            # 302 (Found): The confusing one, and the one that
+            # Bugzilla uses, both to redirect to http to https and to
+            # redirect attachment.cgi&action=view to a different base URL
+            # for security. Specified like 307, traditionally treated as 301.
+            #
+            # See http://en.wikipedia.org/wiki/HTTP_302
+
+            if response.status in (301, 302, 303, 307):
+                new_url = response.getheader("location")
+                if new_url is None:
+                    die("Redirect received without a location to redirect to")
+                if new_url in seen_urls or len(seen_urls) >= 10:
+                    die("Circular redirect or too many redirects")
+
+                old_split = urlparse.urlsplit(url)
+                new_split = urlparse.urlsplit(new_url)
+
+                new_https = new_split.scheme == 'https'
+
+                if new_split.hostname != self.host or new_https != self.https:
+                    connection = get_connection(new_split.hostname, new_https != self.https)
+
+                    # This is a bit of a hack to avoid keeping on redirecting for every
+                    # request. If the server redirected show_bug.cgi we assume it's
+                    # really saying "hey, the bugzilla instance is really over here".
+                    #
+                    # We can't do this for old.split.path == new_split.path because of
+                    # attachment.cgi, though we alternatively could just exclude
+                    # attachment.cgi here.
+                    if (response.status in (301, 302) and
+                        method == 'GET' and
+                        old_split.path == '/show_bug.cgi' and new_split.path == '/show_bug.cgi'):
+
+                        self.host = new_split.hostname
+                        self.https = new_https
+
+                # We can't treat 302 like 303 because of the use of 302 for http
+                # to https, though the hack above will hopefully get us on https
+                # before we try to POST.
+                if response.status == 303:
+                    if method not in ('GET', 'HEAD'):
+                        method = 'GET'
+
+                # Get the relative component of the new URL
+                url = urlparse.urlunsplit((None, None, new_split.path, new_split.query, new_split.fragment))
+            else:
+                return response
 
     def send_post(self, url, fields, files=None):
         content_type, body = encode_multipart_formdata(fields, files)
@@ -784,17 +851,18 @@ class BugTransport(xmlrpclib.Transport):
         xmlrpclib.Transport.send_request(self, connection, *args)
         connection.putheader("Cookie", self.server.get_cookie_string())
 
-servers = []
+servers = {}
 
+# Note that if we detect that we are redirecting, we may rewrite the
+# host/https of the server to avoid doing too many redirections, and
+# so the host,https we connect to may be different than what we use
+# to look up the server.
 def get_bug_server(host, https):
-    for server in servers:
-        if server.host == host and server.https == https:
-            return server
+    identifier = (host, https)
+    if not identifier in servers:
+        servers[identifier] = BugServer(host, https)
 
-    server = BugServer(host, https)
-    servers.append(server)
-
-    return server
+    return servers[identifier]
 
 # Unfortunately, Bugzilla doesn't set a useful status code for
 # form posts.  Because it's very confusing to claim we succeeded
