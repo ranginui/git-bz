@@ -1785,7 +1785,8 @@ def run_push(*args, **kwargs):
     if global_options.force:
         options['force'] = True
     try:
-        out, err = git.push(*args, _return_stderr=True, **options)
+        options['_return_stderr']=True
+        out, err = git.push(*args, **options)
     except CalledProcessError:
         return
     if not dry:
@@ -1827,7 +1828,8 @@ def do_push(*args):
         # We need to add the URLs to the commits before we push
         # We need to push in order to find out what commits we are pushing
         # So, we push --dry first
-        commits = run_push(*args, dry=True)
+        options = { 'dry' : True }
+        commits = run_push(*args, **options)
         if edit_bug(bug, fix_commits=commits):
             run_push(*args)
     else:
