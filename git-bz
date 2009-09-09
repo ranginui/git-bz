@@ -49,6 +49,7 @@ default-priority = medium
 
 CONFIG['bugzilla.gnome.org'] = \
 """
+https = true
 default-priority = Normal
 """
 
