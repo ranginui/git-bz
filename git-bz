@@ -329,6 +329,12 @@ def tracker_uses_https(tracker):
     config = get_config(tracker)
     return 'https' in config and config['https'] == 'true'
 
+def tracker_get_path(tracker):
+    config = get_config(tracker)
+    if 'path' in config:
+        return config['path']
+    return None
+
 def get_default_fields(tracker):
     config = get_config(tracker)
 
@@ -351,10 +357,20 @@ class BugParseError(Exception):
 # uniquely identifies a bug on a server, though until we try
 # to load it (and create a Bug) we don't know if it actually exists.
 class BugHandle:
-    def __init__(self, host, https, id):
+    def __init__(self, host, path, https, id):
         self.host = host
+        self.path = path
         self.https = https
         self.id = id
+
+        # ensure that the path to the bugzilla installation is an absolute path
+        # so that it will still work even if their config option specifies
+        # something like:
+        #   path = bugzilla
+        # instead of the proper form:
+        #   path = /bugzilla
+        if self.path and self.path[0] != '/':
+            self.path = '/' + self.path
 
     def get_url(self):
         return "%s://%s/show_bug.cgi?id=%s" % ("https" if self.https else "http",
@@ -363,11 +379,18 @@ class BugHandle:
 
     @staticmethod
     def parse(bug_reference):
-        m = re.match("http(s?)://([^/]+)/show_bug.cgi\?id=([^&]+)", bug_reference)
+        parseresult = urlparse.urlsplit (bug_reference)
+
+        # strip off everything after the last '/', so '/bugzilla/show_bug.cgi'
+        # will simply become '/bugzilla'
+        path = parseresult.path[:parseresult.path.rfind('/')]
+        m = re.match("id=([^&]+)", parseresult.query)
+
         if m:
-            return BugHandle(host=m.group(2),
-                             https=m.group(1) != "",
-                             id=m.group(3))
+            return BugHandle(host=parseresult.hostname,
+                             path=path,
+                             https=parseresult.scheme=="https",
+                             id=m.group(1))
 
         colon = bug_reference.find(":")
         if colon > 0:
@@ -382,11 +405,12 @@ class BugHandle:
 
         host = resolve_host_alias(tracker)
         https = tracker_uses_https(tracker)
+        path = tracker_get_path(tracker)
 
         if not re.match(r"^.*\.[a-zA-Z]{2,}$", host):
             raise BugParseError("'%s' doesn't look like a valid bugzilla host or alias" % host)
 
-        return BugHandle(host=host, https=https, id=id)
+        return BugHandle(host=host, path=path, https=https, id=id)
 
     @staticmethod
     def parse_or_die(str):
@@ -713,8 +737,9 @@ def get_connection(host, https):
     return connections[identifier]
 
 class BugServer(object):
-    def __init__(self, host, https):
+    def __init__(self, host, path, https):
         self.host = host
+        self.path = path
         self.https = https
 
         self.cookies = get_bugzilla_cookies(host)
@@ -729,6 +754,8 @@ class BugServer(object):
         headers = dict(headers)
         headers['Cookie'] = self.get_cookie_string()
         headers['User-Agent'] = "git-bz"
+        if self.path:
+            url = self.path + url
 
         seen_urls = []
         connection = get_connection(self.host, self.https)
@@ -798,6 +825,8 @@ class BugServer(object):
 
     def send_post(self, url, fields, files=None):
         content_type, body = encode_multipart_formdata(fields, files)
+        if self.path:
+            url = self.path + url
         return self.send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
 
     def get_xmlrpc_proxy(self):
@@ -858,10 +887,10 @@ servers = {}
 # host/https of the server to avoid doing too many redirections, and
 # so the host,https we connect to may be different than what we use
 # to look up the server.
-def get_bug_server(host, https):
-    identifier = (host, https)
+def get_bug_server(host, path, https):
+    identifier = (host, path, https)
     if not identifier in servers:
-        servers[identifier] = BugServer(host, https)
+        servers[identifier] = BugServer(host, path, https)
 
     return servers[identifier]
 
@@ -1109,7 +1138,7 @@ class Bug(object):
 
     @staticmethod
     def load(bug_reference, attachmentdata=False):
-        server = get_bug_server(bug_reference.host, bug_reference.https)
+        server = get_bug_server(bug_reference.host, bug_reference.path, bug_reference.https)
         bug = Bug(server)
         bug._load(bug_reference.id, attachmentdata)
 
@@ -1119,9 +1148,10 @@ class Bug(object):
     def create(tracker, product, component, short_desc, comment):
         host = resolve_host_alias(tracker)
         https = tracker_uses_https(tracker)
+        path = tracker_get_path(tracker)
         default_fields = get_default_fields(tracker)
 
-        server = get_bug_server(host, https)
+        server = get_bug_server(host, path, https)
         bug = Bug(server)
         bug._create(product, component, short_desc, comment, default_fields)
 
