@@ -865,8 +865,6 @@ class BugServer(object):
 
     def send_post(self, url, fields, files=None):
         content_type, body = encode_multipart_formdata(fields, files)
-        if self.path:
-            url = self.path + url
         return self.send_request("POST", url, data=body, headers={ 'Content-Type': content_type })
 
     def get_xmlrpc_proxy(self):
