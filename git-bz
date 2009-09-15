@@ -399,28 +399,29 @@ class BugHandle:
     def parse(bug_reference):
         parseresult = urlparse.urlsplit (bug_reference)
 
-        user = parseresult.username
-        pwd = parseresult.password
-        # if the url did not specify http auth credentials in the form
-        # https://user:pwd@host.com, check to see whether the config file
-        # specifies any auth credentials for this host
-        if not user:
-            user = tracker_get_auth_user(parseresult.hostname)
-        if not pwd:
-            pwd = tracker_get_auth_password(parseresult.hostname)
+        if parseresult.scheme in ('http', 'https'):
+            user = parseresult.username
+            pwd = parseresult.password
+            # if the url did not specify http auth credentials in the form
+            # https://user:pwd@host.com, check to see whether the config file
+            # specifies any auth credentials for this host
+            if not user:
+                user = tracker_get_auth_user(parseresult.hostname)
+            if not pwd:
+                pwd = tracker_get_auth_password(parseresult.hostname)
 
-        # strip off everything after the last '/', so '/bugzilla/show_bug.cgi'
-        # will simply become '/bugzilla'
-        path = parseresult.path[:parseresult.path.rfind('/')]
-        m = re.match("id=([^&]+)", parseresult.query)
+            # strip off everything after the last '/', so '/bugzilla/show_bug.cgi'
+            # will simply become '/bugzilla'
+            path = parseresult.path[:parseresult.path.rfind('/')]
+            m = re.match("id=([^&]+)", parseresult.query)
 
-        if m:
-            return BugHandle(host=parseresult.hostname,
-                             path=path,
-                             https=parseresult.scheme=="https",
-                             id=m.group(1),
-                             authuser=user,
-                             authpwd=pwd)
+            if m:
+                return BugHandle(host=parseresult.hostname,
+                                 path=path,
+                                 https=parseresult.scheme=="https",
+                                 id=m.group(1),
+                                 authuser=user,
+                                 authpwd=pwd)
 
         colon = bug_reference.find(":")
         if colon > 0:
