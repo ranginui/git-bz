@@ -1230,19 +1230,21 @@ def add_url_to_head_commit(commit, bug):
     git.commit(file="-", amend=True, _input=input)
 
 def add_url(bug, commits):
-    # Avoid the rebase if nothing to do
-    commits = [commit for commit in commits if commit_needs_url(commit, bug.id)]
-    if len(commits) == 0: # Nothing to do
+    commit_map = {}
+    oldest_commit = None
+    for commit in commits:
+        commit_map[commit.id] = commit
+        if commit_needs_url(commit, bug.id):
+            oldest_commit = commit
+
+    if not oldest_commit:
         return
 
     # Check that the add-url method is valid before starting the rebase
     validate_add_url_method(bug)
 
-    oldest_commit = commits[-1]
-
-    newer_commits = rev_list_commits(commits[0].id + "..HEAD")
-
-    orig_head = newer_commits[0].id if newer_commits else commits[0].id
+    all_commits = rev_list_commits(oldest_commit.id + "^..HEAD")
+    orig_head = all_commits[0].id
 
     try:
         branch_name = git.symbolic_ref("HEAD", q=True)
@@ -1253,29 +1255,26 @@ def add_url(bug, commits):
         print "Moving to starting point"
         git.checkout(oldest_commit.id + "^", q=True)
 
-        for commit in reversed(commits):
-            if not commit_needs_url(commit, bug.id):
-                print "Recommitting", commit.id[0:7], commit.subject, "(already has bug #)"
+        for commit in reversed(all_commits):
+            # Map back to the original commit object so we can update it
+            if commit.id in commit_map:
+                commit = commit_map[commit.id]
+
+            if commit.id in commit_map and commit_needs_url(commit, bug.id):
+                print "Adding bug reference  ", commit.id[0:7], commit.subject
                 git.cherry_pick(commit.id)
-                # Find the new commit ID, though it doesn't matter much here
-                commit.id = git.rev_parse("HEAD")
-                continue
+                add_url_to_head_commit(commit, bug)
+            else:
+                if commit.id in commit_map:
+                    print "Recommitting", commit.id[0:7], commit.subject, "(already has bug #)"
+                else:
+                    print "Recommitting", commit.id[0:7], commit.subject
+                git.cherry_pick(commit.id)
 
-            print "Adding bug reference  ", commit.id[0:7], commit.subject
-            git.cherry_pick(commit.id)
+            # Get the commit ID; we update the commit with the new ID, so we in the case
+            # where we later format the patch, we format the patch with the added bug URL
+            new_head = commit.id = git.rev_parse("HEAD")
 
-            add_url_to_head_commit(commit, bug)
-
-            # In this case, we need the new commit ID, so that when we later format the
-            # patch, we format the patch with the added bug URL
-            commit.id = git.rev_parse("HEAD")
-
-        for commit in reversed(newer_commits):
-            print "Recommitting", commit.id[0:7], commit.subject
-            git.cherry_pick(commit.id)
-            commit.id = git.rev_parse("HEAD")
-
-        new_head = newer_commits[0].id if newer_commits else commits[0].id
         if branch_name is not None:
             git.update_ref("-m", "bz add-url: adding references to %s" % bug.get_url(),
                            branch_name, new_head)
