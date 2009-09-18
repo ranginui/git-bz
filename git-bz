@@ -1972,7 +1972,7 @@ else:
 
 global_options, args = parser.parse_args()
 
-if global_options.add_url is None:
+if hasattr(global_options, 'add_url') and global_options.add_url is None:
     global_options.add_url = True
 
 if len(args) < min_args or len(args) > max_args:
