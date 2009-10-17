@@ -405,7 +405,7 @@ class BugHandle:
 class CookieError(Exception):
     pass
 
-def do_get_cookies_from_sqlite(host, cookies_sqlite, browser, query):
+def do_get_cookies_from_sqlite(host, cookies_sqlite, browser, query, chromium_time):
     result = {}
     # We use a timeout of 0 since we expect to hit the browser holding
     # the lock often and we need to fall back to making a copy without a delay
@@ -418,6 +418,14 @@ def do_get_cookies_from_sqlite(host, cookies_sqlite, browser, query):
         now = time.time()
         for name,value,path,expiry in cursor.fetchall():
             # Excessive caution: toss out values that need to be quoted in a cookie header
+            expiry = float(expiry)
+            if chromium_time:
+                # Time stored in microseconds since epoch
+                expiry /= 1000000.
+                # Old chromium versions used to use the Unix epoch, but newer versions
+                # use the Windows epoch of January 1, 1601. Convert the latter to Unix epoch
+                if expiry > 11644473600:
+                    expiry -= 11644473600
             if float(expiry) > now and not re.search(r'[()<>@,;:\\"/\[\]?={} \t]', value):
                 result[name] = value
 
@@ -438,13 +446,15 @@ def get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser, *args, **kw
     finally:
         os.remove(db_copy)
 
-def get_cookies_from_sqlite(host, cookies_sqlite, browser, query):
+def get_cookies_from_sqlite(host, cookies_sqlite, browser, query, chromium_time=False):
     try:
-        result = do_get_cookies_from_sqlite(host, cookies_sqlite, browser, query)
+        result = do_get_cookies_from_sqlite(host, cookies_sqlite, browser, query,
+                                            chromium_time=chromium_time)
     except sqlite.OperationalError, e:
         if "database is locked" in str(e):
             # Try making a temporary copy
-            result = get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser, query)
+            result = get_cookies_from_sqlite_with_copy(host, cookies_sqlite, browser, query,
+                                                       chromium_time=chromium_time)
         else:
             raise
 
@@ -495,7 +505,8 @@ def get_bugzilla_cookies_chromium(host):
     if not os.path.exists(cookies_sqlite):
         raise CookieError("%s doesn't exist" % cookies_sqlite)
     return get_cookies_from_sqlite(host, cookies_sqlite, "Chromium",
-                                   "select name,value,path,expires_utc from cookies where host_key = :host")
+                                   "select name,value,path,expires_utc from cookies where host_key = :host",
+                                   chromium_time=True)
 
 browsers = { 'firefox3': get_bugzilla_cookies_ff3,
              'epiphany': get_bugzilla_cookies_epy,
