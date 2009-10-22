@@ -52,26 +52,27 @@ you made locally to the bug report as a patch:
 git bz attach 43215 HEAD
 ----------------------------------------
 
-This automatically rewrites the commit to add the URL of the bug to the commit for
-future reference. The reporter finds some problems in testing, so you come up
-with a new up with a new version of the change and modify your commit using
-'git command --amend'. To attach the new version, you run:
+This automatically rewrites the commit to add the URL of the bug to
+the commit message for future reference. The reporter finds some
+problems in testing, so you come up with a new version of the change
+and modify your commit using 'git command --amend'. To attach the new
+version, you run:
 
 ----------------------------------------
 git bz attach -e HEAD
 ----------------------------------------
 
 You don't have to specify the bug number this time since git-bz will
-find it it in the bug. The -e option (short for --edit) allows you to
-edit the comment for the bug to say what you've changed and pick
-patches to obsolete. Now everybody's happy with the change. To push
-your changes and close the bug, you run:
+find it in the commit message. The -e option (short for --edit)
+allows you to edit the comment for the bug to say what you've changed
+and pick patches to obsolete. Now everybody's happy with the
+change. To push your changes and close the bug, you run:
 
 ----------------------------------------
 git bz push
 ----------------------------------------
 
-This does 'git bz push', adds a comment that the commits were pushed and
+This does 'git push', adds a comment that the commits were pushed and
 marks the patches committed. The changes it is making to the bug will be
 shown in your editor to give you a chance to confirm them and add
 extra comments if desired.
