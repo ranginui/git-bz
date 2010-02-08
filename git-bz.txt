@@ -94,7 +94,8 @@ COMMON OPTIONS
 -u;;
 --add-url;;
 	Rewrite commits to add the bug URL. (This is the default and will not normally
-	need to be specified.)
+	need to be specified; you can change the default using the bz.add-url config
+	variable.)
 
 -n;;
 --no-add-url;;
@@ -301,6 +302,10 @@ git config bz.add-url-method body-append:%u
 # 'Bug 34323 - Speed up frobnification'
 git config bz.add-url-method subject-prepend:Bug %d -
 ----------------------------------------
+
+If you want to disable adding URLs by default, you can use the +bz.add-url+
+config variable, which defaults to false. The -u/--add-url and -n/--no-add-url
+command line options override the config variable.
 
 ALIASES
 -------

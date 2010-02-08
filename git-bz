@@ -253,6 +253,12 @@ def get_default_component():
     except CalledProcessError:
         return None
 
+def get_add_url():
+    try:
+        return git.config('bz.add-url', get=True) == 'true'
+    except CalledProcessError:
+        return True
+
 def get_add_url_method():
     try:
         return git.config('bz.add-url-method', get=True)
@@ -2087,7 +2093,7 @@ else:
 global_options, args = parser.parse_args()
 
 if hasattr(global_options, 'add_url') and global_options.add_url is None:
-    global_options.add_url = True
+    global_options.add_url = get_add_url()
 
 if len(args) < min_args or len(args) > max_args:
     parser.print_usage()
