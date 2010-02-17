@@ -505,18 +505,30 @@ def get_bugzilla_cookies_epy(host):
 
     return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Epiphany")
 
-def get_bugzilla_cookies_chromium(host):
-    config_dir = os.path.expanduser('~/.config/chromium/Default')
+# Shared for Chromium and Google Chrome
+def get_bugzilla_cookies_chr(host, browser, config_dir):
+    config_dir = os.path.expanduser(config_dir)
     cookies_sqlite = os.path.join(config_dir, "Cookies")
     if not os.path.exists(cookies_sqlite):
         raise CookieError("%s doesn't exist" % cookies_sqlite)
-    return get_cookies_from_sqlite(host, cookies_sqlite, "Chromium",
+    return get_cookies_from_sqlite(host, cookies_sqlite, browser,
                                    "select name,value,path,expires_utc from cookies where host_key = :host",
                                    chromium_time=True)
 
-browsers = { 'firefox3': get_bugzilla_cookies_ff3,
-             'epiphany': get_bugzilla_cookies_epy,
-             'chromium': get_bugzilla_cookies_chromium }
+def get_bugzilla_cookies_chromium(host):
+    return get_bugzilla_cookies_chromium(host,
+                                         "Chromium",
+                                         '~/.config/chromium/Default')
+
+def get_bugzilla_cookies_google_chrome(host):
+    return get_bugzilla_cookies_chromium(host,
+                                         "Google Chrome",
+                                         '~/.config/google-chrome/Default')
+
+browsers = { 'firefox3'     : get_bugzilla_cookies_ff3,
+             'epiphany'     : get_bugzilla_cookies_epy,
+             'chromium'     : get_bugzilla_cookies_chromium,
+             'google-chrome': get_bugzilla_cookies_google_chrome }
 
 def browser_list():
     return ", ".join(sorted(browsers.keys()))
