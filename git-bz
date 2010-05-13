@@ -492,8 +492,14 @@ def get_bugzilla_cookies_ff3(host):
     return get_cookies_from_sqlite_xulrunner(host, cookies_sqlite, "Firefox")
 
 def get_bugzilla_cookies_epy(host):
-    ff_dir = os.path.expanduser('~/.gnome2/epiphany/mozilla/epiphany')
-    cookies_sqlite = os.path.join(ff_dir, "cookies.sqlite")
+    # epiphany-webkit migrated the cookie db to a different location, but the
+    # format is the same
+    profile_dir = os.path.expanduser('~/.gnome2/epiphany')
+    cookies_sqlite = os.path.join(profile_dir, "cookies.sqlite")
+    if not os.path.exists(cookies_sqlite):
+        # try the old location
+        cookies_sqlite = os.path.join(profile_dir, "mozilla/epiphany/cookies.sqlite")
+
     if not os.path.exists(cookies_sqlite):
         raise CookieError("%s doesn't exist" % cookies_sqlite)
 
