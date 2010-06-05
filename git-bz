@@ -711,11 +711,15 @@ def expand_abbreviation(abbrev, l):
     raise ValueError("No unique abbreviation expansion")
 
 def prompt(message):
-    # Using print here could result in Python adding a stray space
-    # before the next print
-    sys.stdout.write(message + " [yn] ")
-    line = sys.stdin.readline().strip()
-    return line == 'y' or line == 'Y'
+    while True:
+        # Using print here could result in Python adding a stray space
+        # before the next print
+        sys.stdout.write(message + " [yn] ")
+        line = sys.stdin.readline().strip()
+        if line == 'y' or line == 'Y':
+            return True
+        elif line == 'n' or line == 'N':
+            return False
 
 def die(message):
     print >>sys.stderr, message
