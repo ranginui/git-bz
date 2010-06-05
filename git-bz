@@ -1155,8 +1155,8 @@ def check_add_url(commits, bug_id=None, is_add_url=False):
         return
 
     try:
-        git.diff(exit_code=True, _quiet=True)
-        git.diff(exit_code=True, cached=True, _quiet=True)
+        git.diff(exit_code=True, ignore_submodules=True, _quiet=True)
+        git.diff(exit_code=True, ignore_submodules=True, cached=True,  _quiet=True)
     except CalledProcessError:
         die("Cannot add bug reference to commit message(s); You must commit (or stash) all changes first")
 
