@@ -134,8 +134,10 @@ def git_run(command, *args, **kwargs):
     output, error = process.communicate(input)
     if process.returncode != 0:
         if not quiet and not interactive:
-            print >>sys.stderr, error,
-            print output,
+            # Using print here could result in Python adding a stray space
+            # before the next print
+            sys.stderr.write(error)
+            sys.stdout.write(output)
         raise CalledProcessError(process.returncode, " ".join(to_run))
 
     if interactive:
@@ -709,7 +711,9 @@ def expand_abbreviation(abbrev, l):
     raise ValueError("No unique abbreviation expansion")
 
 def prompt(message):
-    print message, "[yn] ",
+    # Using print here could result in Python adding a stray space
+    # before the next print
+    sys.stdout.write(message + " [yn] ")
     line = sys.stdin.readline().strip()
     return line == 'y' or line == 'Y'
 
