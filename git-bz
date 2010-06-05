@@ -1686,7 +1686,7 @@ def edit_bug(bug, applied_commits=None, fix_commits=None):
     return True
 
 LOG_BUG_REFERENCE = re.compile(r"""
-(\b[Ss]ee\s+(?:\S+\s+){0,2})?
+(\b[Ss]ee\s+(?:[^\s:/]+\s+){0,2})?
 (?:(https?://[^/]+/show_bug.cgi\?id=[^&\s]+)
      |
    [Bb]ug\s+\#?(\d+))
