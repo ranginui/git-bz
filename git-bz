@@ -518,14 +518,14 @@ def get_bugzilla_cookies_chr(host, browser, config_dir):
                                    chromium_time=True)
 
 def get_bugzilla_cookies_chromium(host):
-    return get_bugzilla_cookies_chromium(host,
-                                         "Chromium",
-                                         '~/.config/chromium/Default')
+    return get_bugzilla_cookies_chr(host,
+                                    "Chromium",
+                                    '~/.config/chromium/Default')
 
 def get_bugzilla_cookies_google_chrome(host):
-    return get_bugzilla_cookies_chromium(host,
-                                         "Google Chrome",
-                                         '~/.config/google-chrome/Default')
+    return get_bugzilla_cookies_chr(host,
+                                    "Google Chrome",
+                                    '~/.config/google-chrome/Default')
 
 browsers = { 'firefox3'     : get_bugzilla_cookies_ff3,
              'epiphany'     : get_bugzilla_cookies_epy,
