@@ -267,7 +267,7 @@ Ways to refer to a bug:
 
 <alias>:<id>:: bug # on the given bug tracker alias (see below)
 
-<url>:: An URL of the form http://<hostname>/show_bug.cgi?id-<id>
+<url>:: An URL of the form "http://<hostname>/show_bug.cgi?id-<id>"
 
 [[add-url-method]]
 ADD URL METHOD
