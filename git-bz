@@ -1528,7 +1528,7 @@ def attach_commits(bug, commits, include_comments=True, edit_comments=False, sta
         else:
             description = commit.subject
             obsoletes = []
-        bug.create_patch(commit.subject, body, filename, patch, obsoletes=obsoletes, status=status)
+        bug.create_patch(description, body, filename, patch, obsoletes=obsoletes, status=status)
 
 def do_attach(*args):
     if len(args) == 1:
