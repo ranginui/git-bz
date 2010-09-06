@@ -110,7 +110,6 @@ def git_run(command, *args, **kwargs):
     interactive = False
     quiet = False
     input = None
-    interactive = False
     return_stderr = False
     for (k,v) in kwargs.iteritems():
         if k == '_quiet':
