@@ -405,6 +405,10 @@ class BugHandle:
         parseresult = urlparse.urlsplit (bug_reference)
 
         if parseresult.scheme in ('http', 'https'):
+            # Catch http://www.gnome.org and the oddball http:relative/path and http:/path
+            if len(parseresult.path) == 0 or parseresult.path[0] != '/' or parseresult.hostname is None:
+                raise BugParseError("Invalid bug reference '%s'" % bug_reference)
+
             user = parseresult.username
             pwd = parseresult.password
             # if the url did not specify http auth credentials in the form
@@ -417,12 +421,12 @@ class BugHandle:
 
             # strip off everything after the last '/', so '/bugzilla/show_bug.cgi'
             # will simply become '/bugzilla'
-            path = parseresult.path[:parseresult.path.rfind('/')]
+            base_path = parseresult.path[:parseresult.path.rfind('/')]
             m = re.match("id=([^&]+)", parseresult.query)
 
             if m:
                 return BugHandle(host=parseresult.hostname,
-                                 path=path,
+                                 path=base_path,
                                  https=parseresult.scheme=="https",
                                  id=m.group(1),
                                  authuser=user,
