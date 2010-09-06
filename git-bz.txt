@@ -336,11 +336,22 @@ PER-TRACKER CONFIGURATION
 -------------------------
 git-bz needs some configuration specific to the bugzilla instance (tracker),
 in particular it needs to know initial field values to use when submitting
-bugs; legal values for some fields depend on the instance.
+bugs; legal values for some fields depend on the instance. Initial field
+values are specified by the config variable +default-<field-name>+.
 
-You can also set whether to use http or https by setting the 'https' variabe
-For https, *certificates are not checked* so you are completely vulnerable
-to DNS spoofing and man-in-the-middle attacks. Blame httplib.
+In addition to initial field values, some other variables can be configured
+per tracker:
+
+auth-user:: the user to use for basic HTTP authentication. Since
+  basic auth sends passwords in clear text, you should not use this unless
+  you are also using https.
+auth-password:: the password to use for basic HTTP authentication.
+https:: use https rather than http.
+  For https, *certificates are not checked* so you are completely vulnerable
+  to DNS spoofing and man-in-the-middle attacks. Blame httplib.
+path:: the root path of the bugzilla installation. If bugs are accessed
+  as http://example.com/bugzilla/show_bug.cgi, this variable would be set
+  to /bugzilla.
 
 Configuration comes from 4 sources, in descending order of priority
 
