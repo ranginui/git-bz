@@ -920,7 +920,10 @@ class BugServer(object):
         if self._xmlrpc_proxy is None:
             uri = "%s://%s/xmlrpc.cgi" % ("https" if self.https else "http",
                                           self.host)
-            transport = BugTransport(self)
+            if self.https:
+                transport = SafeBugTransport(self)
+            else:
+                transport = BugTransport(self)
             self._xmlrpc_proxy = xmlrpclib.ServerProxy(uri, transport)
 
         return self._xmlrpc_proxy
@@ -951,23 +954,22 @@ class BugServer(object):
             cache.set(self.host, 'legal_' + field, values)
             return values
 
-class BugTransport(xmlrpclib.Transport):
-    def __init__(self, server):
-        xmlrpclib.Transport.__init__(self)
-        self.server = server
-
-    # Overriding this allows us not to separately subclass Transport and SafeTransport
-    def make_connection(self, host):
-        if self.server.https:
-            return httplib.HTTPS(self.server.host)
-        else:
-            return httplib.HTTP(self.server.host)
-
-    # This is the main point of the subclassing - to add cookies
+# mixin for xmlrpclib.Transport classes to add cookies
+class CookieTransportMixin(object):
     def send_request(self, connection, *args):
         xmlrpclib.Transport.send_request(self, connection, *args)
         connection.putheader("Cookie", self.server.get_cookie_string())
         connection.putheader("Authorization", http_auth_header(self.server.auth_user, self.server.auth_password))
+
+class BugTransport(CookieTransportMixin, xmlrpclib.Transport):
+    def __init__(self, server):
+        xmlrpclib.Transport.__init__(self)
+        self.server = server
+
+class SafeBugTransport(CookieTransportMixin, xmlrpclib.SafeTransport):
+    def __init__(self, server):
+        xmlrpclib.SafeTransport.__init__(self)
+        self.server = server
 
 servers = {}
 
