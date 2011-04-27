@@ -55,7 +55,7 @@ git bz attach 43215 HEAD
 This automatically rewrites the commit to add the URL of the bug to
 the commit message for future reference. The reporter finds some
 problems in testing, so you come up with a new version of the change
-and modify your commit using 'git command --amend'. To attach the new
+and modify your commit using 'git commit --amend'. To attach the new
 version, you run:
 
 ----------------------------------------
