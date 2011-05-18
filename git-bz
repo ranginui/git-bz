@@ -348,20 +348,20 @@ def tracker_get_path(tracker):
 
 def tracker_get_auth_user(tracker):
     config = get_config(tracker)
-    if 'path' in config:
+    if 'auth-user' in config:
         return config['auth-user']
     return None
 
 def tracker_get_auth_password(tracker):
     config = get_config(tracker)
-    if 'path' in config:
+    if 'auth-password' in config:
         return config['auth-password']
     return None
 
 def get_default_fields(tracker):
     config = get_config(tracker)
 
-    default_fields = {}
+    default_fields = x{}
 
     for key, value in config.iteritems():
         if key.startswith("default-"):
