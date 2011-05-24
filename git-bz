@@ -361,7 +361,7 @@ def tracker_get_auth_password(tracker):
 def get_default_fields(tracker):
     config = get_config(tracker)
 
-    default_fields = x{}
+    default_fields = {}
 
     for key, value in config.iteritems():
         if key.startswith("default-"):
