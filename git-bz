@@ -65,6 +65,7 @@ import base64
 import cPickle as pickle
 from ConfigParser import RawConfigParser, NoOptionError
 import httplib
+import urllib
 from optparse import OptionParser
 import os
 try:
@@ -358,6 +359,18 @@ def tracker_get_auth_password(tracker):
         return config['auth-password']
     return None
 
+def tracker_get_bz_user(tracker):
+    config = get_config(tracker)
+    if 'bz-user' in config:
+        return config['bz-user']
+    return None
+
+def tracker_get_bz_password(tracker):
+    config = get_config(tracker)
+    if 'bz-password' in config:
+        return config['bz-password']
+    return None
+
 def get_default_fields(tracker):
     config = get_config(tracker)
 
@@ -380,13 +393,15 @@ class BugParseError(Exception):
 # uniquely identifies a bug on a server, though until we try
 # to load it (and create a Bug) we don't know if it actually exists.
 class BugHandle:
-    def __init__(self, host, path, https, id, auth_user=None, auth_password=None):
+    def __init__(self, host, path, https, id, auth_user=None, auth_password=None, bz_user=None, bz_password=None):
         self.host = host
         self.path = path
         self.https = https
         self.id = id
         self.auth_user = auth_user
         self.auth_password = auth_password
+        self.bz_user = bz_user
+        self.bz_password = bz_password
 
         # ensure that the path to the bugzilla installation is an absolute path
         # so that it will still work even if their config option specifies
@@ -435,7 +450,9 @@ class BugHandle:
                                  https=parseresult.scheme=="https",
                                  id=m.group(1),
                                  auth_user=user,
-                                 auth_password=password)
+                                 auth_password=password,
+                                 bz_user=tracker_get_bz_user(parseresult.hostname),
+                                 bz_password=tracker_get_bz_password(parseresult.hostname))
 
         colon = bug_reference.find(":")
         if colon > 0:
@@ -453,11 +470,13 @@ class BugHandle:
         path = tracker_get_path(tracker)
         auth_user = tracker_get_auth_user(tracker)
         auth_password = tracker_get_auth_password(tracker)
+        bz_user = tracker_get_bz_user(tracker)
+        bz_password = tracker_get_bz_password(tracker)
 
         if not re.match(r"^.*\.[a-zA-Z]{2,}$", host):
             raise BugParseError("'%s' doesn't look like a valid bugzilla host or alias" % host)
 
-        return BugHandle(host=host, path=path, https=https, id=id, auth_user=auth_user, auth_password=auth_password)
+        return BugHandle(host=host, path=path, https=https, id=id, auth_user=auth_user, auth_password=auth_password, bz_user=bz_user, bz_password=bz_password)
 
     @staticmethod
     def parse_or_die(str):
@@ -822,20 +841,32 @@ def get_connection(host, https):
     return connections[identifier]
 
 class BugServer(object):
-    def __init__(self, host, path, https, auth_user=None, auth_password=None):
+    def __init__(self, host, path, https, auth_user=None, auth_password=None, bz_user=None, bz_password=None):
         self.host = host
         self.path = path
         self.https = https
         self.auth_user = auth_user
         self.auth_password = auth_password
+        self.bz_password = bz_password
+        self.bz_user = bz_user
 
-        self.cookies = get_bugzilla_cookies(host)
+        self.cookiestring = ''
 
         self._xmlrpc_proxy = None
 
     def get_cookie_string(self):
-        return ("Bugzilla_login=%s; Bugzilla_logincookie=%s" %
-                (self.cookies['Bugzilla_login'], self.cookies['Bugzilla_logincookie']))
+        if self.cookiestring == '':
+            if self.bz_user and self.bz_password:
+                connection = get_connection(self.host, self.https)
+                connection.request("POST", self.path + "/index.cgi", urllib.urlencode({'Bugzilla_login':self.bz_user,'Bugzilla_password':self.bz_password}))
+                res = connection.getresponse()
+                self.cookiestring = res.getheader('set-cookie')
+                connection.close()
+            else:
+                self.cookies = get_bugzilla_cookies(host)
+                self.cookiestring = ("Bugzilla_login=%s; Bugzilla_logincookie=%s" %
+                                     (self.cookies['Bugzilla_login'], self.cookies['Bugzilla_logincookie']))
+        return self.cookiestring
 
     def send_request(self, method, url, data=None, headers={}):
         headers = dict(headers)
@@ -977,10 +1008,10 @@ servers = {}
 # host/https of the server to avoid doing too many redirections, and
 # so the host,https we connect to may be different than what we use
 # to look up the server.
-def get_bug_server(host, path, https, auth_user, auth_password):
+def get_bug_server(host, path, https, auth_user, auth_password, bz_user, bz_password):
     identifier = (host, path, https)
     if not identifier in servers:
-        servers[identifier] = BugServer(host, path, https, auth_user, auth_password)
+        servers[identifier] = BugServer(host, path, https, auth_user, auth_password, bz_user, bz_password)
 
     return servers[identifier]
 
@@ -1228,7 +1259,7 @@ class Bug(object):
 
     @staticmethod
     def load(bug_reference, attachmentdata=False):
-        server = get_bug_server(bug_reference.host, bug_reference.path, bug_reference.https, bug_reference.auth_user, bug_reference.auth_password)
+        server = get_bug_server(bug_reference.host, bug_reference.path, bug_reference.https, bug_reference.auth_user, bug_reference.auth_password, bug_reference.bz_user, bug_reference.bz_password)
         bug = Bug(server)
         bug._load(bug_reference.id, attachmentdata)
 
@@ -1241,9 +1272,11 @@ class Bug(object):
         path = tracker_get_path(tracker)
         auth_user = tracker_get_auth_user(tracker)
         auth_password = tracker_get_auth_password(tracker)
+        bz_user = tracker_get_bz_user(tracker)
+        bz_password = tracker_get_bz_password(tracker)
         default_fields = get_default_fields(tracker)
 
-        server = get_bug_server(host, path, https, auth_user, auth_password)
+        server = get_bug_server(host, path, https, auth_user, auth_password, bz_user, bz_password)
         bug = Bug(server)
         bug._create(product, component, short_desc, comment, default_fields)
 

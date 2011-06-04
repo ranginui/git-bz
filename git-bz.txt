@@ -25,11 +25,14 @@ applying patches in bugs to your current tree, and closing bugs once
 you've pushed the fixes publically can be done completely from the
 command line without having to go to your web browser.
 
-Authentication for git-bz is done by reading the cookies for the
+Authentication for git-bz can be done by reading the cookies for the
 Bugzilla host from your web browser. In order to do this, git-bz needs
 to know how to access the cookies for your web browser; git-bz
 currently is able to do this for Firefox, Epiphany, and Chromium on
 Linux.
+
+Alternatively, you can set the bz-user and bz-password in the
+git config for each tracker.
 
 EXAMPLE SESSION
 ---------------
